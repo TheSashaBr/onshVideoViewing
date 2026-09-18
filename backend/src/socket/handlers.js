@@ -146,8 +146,75 @@ function setupHandlers(io, socket) {
     }
   });
 
+  // --- WebRTC Voice Call Signaling ---
+  socket.on('webrtc_signal', ({ targetUserId, signal }) => {
+    if (!socket.roomId || !socket.userId) return;
+    // Relay signaling offer/answer/candidate to specific target peer in the room
+    io.to(socket.roomId).emit('webrtc_signal_relay', {
+      senderUserId: socket.userId,
+      targetUserId,
+      signal
+    });
+  });
+
+  socket.on('webrtc_join_voice', () => {
+    if (!socket.roomId || !socket.userId) return;
+    socket.isVoiceActive = true;
+    
+    // Notify all peers in room that this user joined voice
+    socket.to(socket.roomId).emit('webrtc_peer_joined_voice', {
+      userId: socket.userId,
+      nickname: socket.nickname
+    });
+
+    // Return the list of peers already active in voice in this room
+    const roomSockets = io.sockets.adapter.rooms.get(socket.roomId);
+    const existingVoiceUsers = [];
+    if (roomSockets) {
+      for (const id of roomSockets) {
+        const s = io.sockets.sockets.get(id);
+        if (s && s.isVoiceActive && s.userId && s.userId !== socket.userId) {
+          existingVoiceUsers.push({
+            userId: s.userId,
+            nickname: s.nickname
+          });
+        }
+      }
+    }
+    socket.emit('webrtc_existing_voice_peers', { users: existingVoiceUsers });
+  });
+
+  socket.on('webrtc_get_voice_users', () => {
+    if (!socket.roomId) return;
+    const roomSockets = io.sockets.adapter.rooms.get(socket.roomId);
+    const voiceUsers = [];
+    if (roomSockets) {
+      for (const id of roomSockets) {
+        const s = io.sockets.sockets.get(id);
+        if (s && s.isVoiceActive && s.userId) {
+          voiceUsers.push(s.userId);
+        }
+      }
+    }
+    socket.emit('webrtc_voice_users_list', { users: voiceUsers });
+  });
+
+  socket.on('webrtc_leave_voice', () => {
+    if (!socket.roomId || !socket.userId) return;
+    socket.isVoiceActive = false;
+    io.to(socket.roomId).emit('webrtc_peer_left_voice', {
+      userId: socket.userId
+    });
+  });
+
   socket.on('disconnect', async () => {
     if (socket.roomId && socket.userId) {
+      if (socket.isVoiceActive) {
+        socket.isVoiceActive = false;
+        io.to(socket.roomId).emit('webrtc_peer_left_voice', {
+          userId: socket.userId
+        });
+      }
       socket.to(socket.roomId).emit('message', {
         type: 'TYPING_STATUS',
         roomId: socket.roomId,

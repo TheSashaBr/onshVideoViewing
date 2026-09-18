@@ -2,9 +2,11 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import { useRoomStore } from '../store/roomStore';
+import { useVoiceStore } from '../store/voiceStore';
 import Player from '../components/Player';
 import Chat from '../components/Chat';
 import Members from '../components/Members';
+import VoiceChat from '../components/VoiceChat';
 import {
   Share2,
   Minimize2,
@@ -32,6 +34,7 @@ export default function Room() {
   const containerRef = useRef(null);
   const joinRoom = useRoomStore(state => state.joinRoom);
   const leaveRoom = useRoomStore(state => state.leaveRoom);
+  const socket = useRoomStore(state => state.socket);
   const members = useRoomStore(state => state.members);
   const chatMessages = useRoomStore(state => state.chatMessages);
   const connectionStatus = useRoomStore(state => state.connectionStatus);
@@ -47,8 +50,18 @@ export default function Room() {
   const isHost = !!hostToken;
 
   useEffect(() => {
-    return () => leaveRoom();
+    return () => {
+      useVoiceStore.getState().leaveVoice();
+      leaveRoom();
+    };
   }, [leaveRoom]);
+
+  // Initialize room-wide voice listeners when socket connects to room
+  useEffect(() => {
+    if (socket && hasJoinedRoom) {
+      useVoiceStore.getState().initVoiceRoomListeners(socket);
+    }
+  }, [socket, hasJoinedRoom]);
 
   // Track screen orientation & window dimensions
   useEffect(() => {
@@ -190,10 +203,10 @@ export default function Room() {
 
             <button
               type="submit"
-              disabled={joiningRoom}
-              className="w-full bg-white text-black active:scale-[0.97] py-3 rounded-xl font-bold shadow-lg transition duration-150 text-base disabled:opacity-60"
+              disabled={isJoining}
+              className="w-full bg-white text-black active:scale-[0.97] py-3 rounded-xl font-bold shadow-lg transition duration-150 text-base disabled:opacity-60 cursor-pointer"
             >
-              {joiningRoom ? (
+              {isJoining ? (
                 <span className="flex items-center justify-center gap-2">
                   <span className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
                   Подключение...
@@ -269,6 +282,8 @@ export default function Room() {
             </button>
 
             <div className="flex items-center gap-1.5">
+              <VoiceChat />
+
               <button
                 onClick={handleShare}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-white/[0.06] active:scale-95 text-xs font-medium rounded-lg text-gray-300 transition"
@@ -319,6 +334,9 @@ export default function Room() {
                 </div>
 
                 <div className="flex items-center gap-2 pointer-events-auto">
+                  {/* Voice Chat in cinema mode */}
+                  <VoiceChat compact />
+
                   {/* Toggle floating chat */}
                   <button
                     onClick={() => setShowFloatingChat(prev => !prev)}

@@ -1,11 +1,16 @@
 import { useRoomStore } from '../store/roomStore';
-import { Users, Crown } from 'lucide-react';
+import { useVoiceStore } from '../store/voiceStore';
+import { Users, Crown, Mic, MicOff, Volume2 } from 'lucide-react';
 
 export default function Members() {
   const members = useRoomStore(state => state.members);
   const currentUserId = useRoomStore(state => state.userId);
   const currentNickname = useRoomStore(state => state.nickname);
   const isHost = useRoomStore(state => state.isHost);
+
+  const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
+  const talkingUsers = useVoiceStore(state => state.talkingUsers);
+  const isMuted = useVoiceStore(state => state.isMuted);
 
   // Fallback: if members list is still populating, ensure current user is shown
   const displayMembers =
@@ -62,12 +67,39 @@ export default function Members() {
                   </span>
                 )}
               </div>
-              {m.isHost && (
-                <span className="flex items-center gap-1 text-[11px] text-amber-400 font-medium bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full shrink-0">
-                  <Crown className="w-3 h-3" />
-                  Хост
-                </span>
-              )}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {roomVoiceUsers.has(m.userId) && (
+                  talkingUsers.has(m.userId) ? (
+                    <span
+                      className="flex items-center gap-1 text-[11px] text-emerald-300 font-medium bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.5 rounded-full animate-pulse"
+                      title="Говорит прямо сейчас"
+                    >
+                      <Volume2 className="w-3 h-3 text-emerald-400" />
+                      <span className="hidden sm:inline text-[10px]">Говорит</span>
+                    </span>
+                  ) : isMe && isMuted ? (
+                    <span
+                      className="flex items-center text-red-400 bg-red-500/10 border border-red-500/20 p-1 rounded-full text-[11px]"
+                      title="Микрофон выключен"
+                    >
+                      <MicOff className="w-3 h-3" />
+                    </span>
+                  ) : (
+                    <span
+                      className="flex items-center text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 p-1 rounded-full text-[11px]"
+                      title="В голосовом чате"
+                    >
+                      <Mic className="w-3 h-3" />
+                    </span>
+                  )
+                )}
+                {m.isHost && (
+                  <span className="flex items-center gap-1 text-[11px] text-amber-400 font-medium bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full shrink-0">
+                    <Crown className="w-3 h-3" />
+                    Хост
+                  </span>
+                )}
+              </div>
             </div>
           );
         })}
