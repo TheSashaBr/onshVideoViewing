@@ -20,7 +20,7 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
   };
 
   return (
-    <div className={`flex flex-col h-full ${isOverlay ? 'bg-gray-900/95 backdrop-blur shadow-2xl border border-gray-700/60 rounded-xl' : 'bg-gray-900'}`}>
+    <div className={`flex flex-col h-full ${isOverlay ? 'bg-[#0a0a0f]/95 backdrop-blur-xl shadow-2xl border border-white/[0.08] rounded-xl' : 'bg-[#0a0a0f]'}`}>
       {/* Header if overlay mode */}
       {isOverlay && (
         <div className="flex items-center justify-between p-3 border-b border-gray-800 bg-gray-800/80 rounded-t-xl shrink-0">
@@ -62,14 +62,14 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
       {/* Message input */}
       <form
         onSubmit={handleSubmit}
-        className="p-2.5 sm:p-3 bg-gray-800/90 border-t border-gray-700/70 shrink-0 flex items-center gap-2 pb-safe"
+        className="p-2.5 sm:p-3 bg-white/[0.03] border-t border-white/[0.06] shrink-0 flex items-center gap-2 pb-safe"
       >
         <input
           type="text"
           value={text}
           onChange={e => setText(e.target.value)}
           placeholder="Написать сообщение..."
-          className="flex-1 bg-gray-700/80 hover:bg-gray-700 border border-gray-600/60 rounded-lg px-3.5 py-2 text-base sm:text-sm text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          className="flex-1 bg-white/[0.05] hover:bg-white/[0.07] border border-white/[0.08] rounded-lg px-3.5 py-2 text-base sm:text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all"
         />
         <button
           type="submit"

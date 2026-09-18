@@ -69,5 +69,29 @@ export function parseVideoUrl(url) {
     }
   }
 
+  // 4. Check VK Video
+  // https://vk.com/video-12345_67890 or https://vkvideo.ru/video-12345_67890
+  const vkRegex = /(?:vk\.com|vkvideo\.ru)\/(?:video|clip)(-?\d+_\d+)/;
+  const vkMatch = trimmed.match(vkRegex);
+  if (vkMatch && vkMatch[1]) {
+    return {
+      platform: 'vkvideo',
+      id: vkMatch[1],
+      url: trimmed,
+    };
+  }
+
+  // 5. Check Yandex Video / Dzen
+  // https://dzen.ru/video/watch/VIDEO_ID
+  const dzenRegex = /dzen\.ru\/video\/watch\/([a-zA-Z0-9]+)/;
+  const dzenMatch = trimmed.match(dzenRegex);
+  if (dzenMatch && dzenMatch[1]) {
+    return {
+      platform: 'dzen',
+      id: dzenMatch[1],
+      url: trimmed,
+    };
+  }
+
   return null;
 }

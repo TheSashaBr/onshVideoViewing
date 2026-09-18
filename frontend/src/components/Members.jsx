@@ -22,8 +22,8 @@ export default function Members() {
       : [];
 
   return (
-    <div className="flex flex-col h-full bg-gray-900">
-      <div className="p-3 bg-gray-800/90 font-semibold border-b border-gray-700/70 shrink-0 flex items-center justify-between text-sm text-gray-200">
+    <div className="flex flex-col h-full bg-[#0a0a0f]">
+      <div className="p-3 bg-white/[0.03] font-semibold border-b border-white/[0.06] shrink-0 flex items-center justify-between text-sm text-gray-200">
         <span className="flex items-center gap-2">
           <Users className="w-4 h-4 text-blue-400" />
           Участники комнаты

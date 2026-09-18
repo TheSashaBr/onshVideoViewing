@@ -4,6 +4,8 @@ import { parseVideoUrl } from '../utils/urlHelper';
 import YouTubePlayer from './players/YouTubePlayer';
 import RutubePlayer from './players/RutubePlayer';
 import TwitchPlayer from './players/TwitchPlayer';
+import VKVideoPlayer from './players/VKVideoPlayer';
+import DzenPlayer from './players/DzenPlayer';
 
 export default function Player() {
   const roomState = useRoomStore(state => state.roomState);
@@ -20,7 +22,7 @@ export default function Player() {
 
     const parsed = parseVideoUrl(inputUrl);
     if (!parsed) {
-      setError('Неподдерживаемая ссылка. Поддерживаются YouTube, Rutube и Twitch.');
+      setError('Неподдерживаемая ссылка. Поддерживаются YouTube, Rutube, Twitch, VK Видео и Dzen.');
       return;
     }
 
@@ -60,7 +62,7 @@ export default function Player() {
             Вставьте ссылку на ролик или трансляцию для совместного просмотра
           </p>
 
-          <div className="flex justify-center gap-2 mb-6">
+          <div className="flex flex-wrap justify-center gap-2 mb-6">
             <span className="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-full text-xs font-medium">
               YouTube
             </span>
@@ -69,6 +71,12 @@ export default function Player() {
             </span>
             <span className="px-3 py-1.5 bg-purple-500/10 border border-purple-500/20 text-purple-400 rounded-full text-xs font-medium">
               Twitch
+            </span>
+            <span className="px-3 py-1.5 bg-sky-500/10 border border-sky-500/20 text-sky-400 rounded-full text-xs font-medium">
+              VK Видео
+            </span>
+            <span className="px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-full text-xs font-medium">
+              Dzen
             </span>
           </div>
 
@@ -140,6 +148,28 @@ export default function Player() {
         />
       )}
 
+      {parsedCurrent.platform === 'vkvideo' && (
+        <VKVideoPlayer
+          videoId={parsedCurrent.id}
+          roomState={roomState}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onSeek={handleSeek}
+          onError={handleError}
+        />
+      )}
+
+      {parsedCurrent.platform === 'dzen' && (
+        <DzenPlayer
+          videoId={parsedCurrent.id}
+          roomState={roomState}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onSeek={handleSeek}
+          onError={handleError}
+        />
+      )}
+
       {/* URL changer bar: visible on desktop hover, and accessible on mobile via button */}
       <div className="absolute bottom-4 left-4 z-20">
         <button
@@ -167,7 +197,7 @@ export default function Player() {
             </div>
 
             <p className="text-gray-400 text-xs mb-4">
-              Вставьте ссылку на YouTube, Rutube или Twitch канал / запись
+              Вставьте ссылку на YouTube, Rutube, Twitch, VK Видео или Dzen
             </p>
 
             <form

@@ -25,7 +25,7 @@ export default function Room() {
   const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'members'
   const [isLandscape, setIsLandscape] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isManualCinemaMode, setIsManualCinemaMode] = useState(false);
+  const [isManualCinemaMode, setIsManualCinemaMode] = useState(() => window.innerWidth < 768);
   const [showFloatingChat, setShowFloatingChat] = useState(false);
   const [copied, setCopied] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
@@ -186,26 +186,27 @@ export default function Room() {
 
   if (!hasJoined) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 bg-slate-950">
-        <div className="bg-gray-850 bg-gray-900/90 border border-gray-800 p-6 sm:p-8 rounded-2xl shadow-2xl w-full max-w-sm backdrop-blur-sm">
-          <div className="text-center mb-6">
-            <h2 className="text-2xl font-bold text-white mb-1">Войти в комнату</h2>
-            <p className="text-gray-400 text-xs sm:text-sm">
-              Введите никнейм, чтобы присоединиться к просмотру
+      <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 bg-[#0a0a0f] relative overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-blue-600/10 rounded-full blur-[120px]" />
+        </div>
+        <div className="relative z-10 bg-white/[0.03] border border-white/[0.08] p-7 sm:p-9 rounded-2xl shadow-2xl w-full max-w-sm backdrop-blur-sm">
+          <div className="text-center mb-7">
+            <img src="/onsh-logo.png" alt="onsh" className="h-8 mx-auto mb-4 opacity-60" />
+            <h2 className="text-xl font-bold text-white mb-1">Войти в комнату</h2>
+            <p className="text-gray-500 text-sm">
+              Введите никнейм для просмотра
             </p>
           </div>
 
           <form onSubmit={handleJoin} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-300 mb-1.5">
-                Ваш никнейм
-              </label>
               <input
                 type="text"
                 value={nickname}
                 onChange={e => setNickname(e.target.value)}
-                placeholder="Например: Алекс"
-                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-base text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                placeholder="Ваш никнейм"
+                className="w-full bg-white/[0.05] border border-white/[0.1] rounded-xl px-4 py-3 text-base text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition"
                 required
                 autoFocus
               />
@@ -214,11 +215,11 @@ export default function Room() {
             <button
               type="submit"
               disabled={joiningRoom}
-              className="w-full bg-blue-600 hover:bg-blue-500 active:scale-[0.98] py-3 rounded-xl font-semibold text-white shadow-lg transition duration-150 text-base disabled:opacity-60"
+              className="w-full bg-white text-black active:scale-[0.97] py-3 rounded-xl font-bold shadow-lg transition duration-150 text-base disabled:opacity-60"
             >
               {joiningRoom ? (
                 <span className="flex items-center justify-center gap-2">
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin" />
                   Подключение...
                 </span>
               ) : (
@@ -237,7 +238,7 @@ export default function Room() {
   return (
     <div
       ref={containerRef}
-      className="flex flex-col md:flex-row h-[100dvh] w-full bg-slate-950 text-white overflow-hidden select-none"
+      className="flex flex-col md:flex-row h-[100dvh] w-full bg-[#0a0a0f] text-white overflow-hidden select-none"
     >
       <ToastContainer />
       {connectionStatus === 'reconnecting' && (
@@ -260,38 +261,37 @@ export default function Room() {
       >
         {/* Header: visible on desktop, or in mobile portrait */}
         {!isCinemaMode && (
-          <header className="bg-gray-900/95 border-b border-gray-800 px-3 sm:px-4 py-2.5 flex justify-between items-center shrink-0 z-20 pt-safe">
+          <header className="bg-[#0a0a0f]/95 backdrop-blur-xl border-b border-white/[0.06] px-3 sm:px-5 py-2 flex justify-between items-center shrink-0 z-20 pt-safe">
             <button
               onClick={() => {
                 leaveRoom();
                 navigate('/');
               }}
-              className="flex items-center gap-2.5 group text-left cursor-pointer focus:outline-none"
-              title="Вернуться на главную onsh"
+              className="flex items-center gap-2 group text-left cursor-pointer focus:outline-none"
+              title="Вернуться на главную"
             >
               <img
                 src="/onsh-logo.png"
                 alt="onsh"
-                className="h-7 sm:h-8 w-auto object-contain group-hover:scale-105 transition-transform"
+                className="h-6 sm:h-7 w-auto object-contain group-hover:opacity-80 transition-opacity"
               />
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             </button>
 
-            {/* Quick Actions in Header */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <button
                 onClick={handleShare}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 active:scale-95 text-xs font-medium rounded-lg text-gray-200 border border-gray-700 transition"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-white/[0.06] active:scale-95 text-xs font-medium rounded-lg text-gray-300 transition"
                 title="Поделиться ссылкой"
               >
                 {copied ? (
                   <>
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-emerald-400">Скопировано!</span>
+                    <span className="text-emerald-400">Скопировано</span>
                   </>
                 ) : (
                   <>
-                    <Share2 className="w-3.5 h-3.5 text-blue-400" />
+                    <Share2 className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">Пригласить</span>
                   </>
                 )}
@@ -299,11 +299,10 @@ export default function Room() {
 
               <button
                 onClick={toggleRotateAndFullscreen}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/90 hover:bg-blue-600 active:scale-95 text-xs font-medium rounded-lg text-white shadow transition"
-                title="Полноэкранный просмотр / Поворот"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/[0.08] hover:bg-white/[0.12] active:scale-95 text-xs font-medium rounded-lg text-white transition"
+                title="Полноэкранный просмотр"
               >
                 <RotateCw className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Повернуть</span>
               </button>
             </div>
           </header>
@@ -373,9 +372,9 @@ export default function Room() {
 
         {/* Mobile Tabs & Content (Only visible on small screens when NOT in cinema mode) */}
         {!isCinemaMode && (
-          <div className="flex flex-col flex-1 min-h-0 md:hidden bg-gray-900">
+          <div className="flex flex-col flex-1 min-h-0 md:hidden bg-[#0a0a0f]">
             {/* Mobile Tab Selector */}
-            <div className="flex border-b border-gray-800 bg-gray-900/90 shrink-0">
+            <div className="flex border-b border-white/[0.06] bg-[#0a0a0f]/90 shrink-0">
               <button
                 onClick={() => setActiveTab('chat')}
                 className={`flex-1 py-2.5 text-xs font-semibold flex items-center justify-center gap-2 border-b-2 transition-colors ${
@@ -416,8 +415,8 @@ export default function Room() {
 
       {/* Desktop Sidebar (Only visible on md: screens and above) */}
       {!isCinemaMode && (
-        <aside className="hidden md:flex w-80 lg:w-96 bg-gray-900 border-l border-gray-800 flex-col shrink-0 h-full">
-          <div className="h-60 border-b border-gray-800 shrink-0 overflow-hidden">
+        <aside className="hidden md:flex w-80 lg:w-96 bg-[#0a0a0f] border-l border-white/[0.06] flex-col shrink-0 h-full">
+          <div className="h-60 border-b border-white/[0.06] shrink-0 overflow-hidden">
             <Members />
           </div>
           <div className="flex-1 overflow-hidden flex flex-col">
