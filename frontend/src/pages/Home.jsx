@@ -3,9 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { Tv, Sparkles, ArrowRight } from 'lucide-react';
 
 const getApiUrl = () => {
-  const envUrl = import.meta.env.VITE_API_URL;
+  let envUrl = import.meta.env.VITE_API_URL;
   if (envUrl) {
-    return envUrl.replace(/\/+$/, '');
+    envUrl = envUrl.replace(/\/+$/, '');
+    if (envUrl.includes('onsh-backend.onrender.com')) {
+      return 'https://onshvideoviewing.onrender.com';
+    }
+    return envUrl;
   }
   const protocol = window.location.protocol;
   const hostname = window.location.hostname || 'localhost';
