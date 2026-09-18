@@ -8,6 +8,19 @@ const getApiUrl = () => {
   }
   const protocol = window.location.protocol;
   const hostname = window.location.hostname || 'localhost';
+
+  // In production (Vercel / public domain), connect to Render backend by default
+  const isLocal =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.startsWith('192.168.') ||
+    hostname.startsWith('10.') ||
+    hostname.startsWith('172.');
+
+  if (!isLocal) {
+    return 'https://onshvideoviewing.onrender.com';
+  }
+
   return `${protocol}//${hostname}:3001`;
 };
 
