@@ -89,7 +89,7 @@ function setupHandlers(io, socket) {
           } else if (type === 'PAUSE') {
             isPlayingState = 'false';
           } else if (type === 'SEEK') {
-            isPlayingState = payload.isPlaying !== undefined ? String(payload.isPlaying) : (room?.isPlaying || 'true');
+            isPlayingState = payload.isPlaying !== undefined ? String(payload.isPlaying) : 'true';
           }
 
           await updateRoomState(roomId, {

@@ -31,7 +31,7 @@ export default function YouTubePlayer({
         }
 
         const drift = Math.abs(playerTime - expectedTime);
-        if (drift > 2.5) {
+        if (drift > 2.5 && roomState.isPlaying) {
           ignoreEventsUntil.current = Date.now() + 1500;
           player.seekTo(expectedTime, true);
         }
@@ -60,6 +60,7 @@ export default function YouTubePlayer({
 
       try {
         const playerTime = await player.getCurrentTime();
+        const playerState = await player.getPlayerState();
         const now = Date.now();
         const deltaReal = (now - lastTimeCheck.current) / 1000;
         const deltaPlayer = playerTime - lastKnownPlayerTime.current;
@@ -73,8 +74,11 @@ export default function YouTubePlayer({
         }
 
         // Detect if the USER manually jumped on the timeline:
-        // deltaPlayer < -1.5s (jumped back) or jumped forward much faster than real time passed
-        const isUserSeek = deltaPlayer < -1.5 || (deltaPlayer - deltaReal > 3.0);
+        // Only if actively playing and well past initial startup
+        const isUserSeek =
+          playerState === 1 &&
+          (deltaPlayer < -1.5 || (deltaPlayer - deltaReal > 3.0 && playerTime > 3.0));
+
         if (isUserSeek) {
           ignoreEventsUntil.current = now + 1500;
           onSeek?.(playerTime);
@@ -114,6 +118,9 @@ export default function YouTubePlayer({
       return;
     }
     const currentTime = await e.target.getCurrentTime();
+    lastKnownPlayerTime.current = currentTime;
+    lastTimeCheck.current = Date.now();
+    ignoreEventsUntil.current = Date.now() + 1000;
     onPlay?.(currentTime);
   };
 
@@ -122,6 +129,9 @@ export default function YouTubePlayer({
       return;
     }
     const currentTime = await e.target.getCurrentTime();
+    lastKnownPlayerTime.current = currentTime;
+    lastTimeCheck.current = Date.now();
+    ignoreEventsUntil.current = Date.now() + 1000;
     onPause?.(currentTime);
   };
 

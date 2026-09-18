@@ -131,6 +131,36 @@ export const useRoomStore = create((set, get) => ({
         payload
       });
     }
+
+    // Optimistically update local roomState for the sender so calculations never fall back to 0
+    if (msgType === 'PLAY') {
+      set(state => ({
+        roomState: {
+          ...state.roomState,
+          currentTime: payload?.position ?? state.roomState.currentTime,
+          isPlaying: true,
+          lastUpdatedAt: Date.now()
+        }
+      }));
+    } else if (msgType === 'PAUSE') {
+      set(state => ({
+        roomState: {
+          ...state.roomState,
+          currentTime: payload?.position ?? state.roomState.currentTime,
+          isPlaying: false,
+          lastUpdatedAt: Date.now()
+        }
+      }));
+    } else if (msgType === 'SEEK') {
+      set(state => ({
+        roomState: {
+          ...state.roomState,
+          currentTime: payload?.position ?? state.roomState.currentTime,
+          isPlaying: payload?.isPlaying !== undefined ? payload.isPlaying : state.roomState.isPlaying,
+          lastUpdatedAt: Date.now()
+        }
+      }));
+    }
   },
 
   loadVideo: (videoUrl, videoType = 'youtube') => {

@@ -36,7 +36,7 @@ export default function RutubePlayer({
     }
 
     const drift = Math.abs(currentRutubeTimeRef.current - expectedTime);
-    if (drift > 2.5) {
+    if (drift > 2.5 && roomState.isPlaying) {
       ignoreEventsUntil.current = Date.now() + 1500;
       postRutubeCommand('player:setCurrentTime', { time: Math.max(0, expectedTime) });
     }
@@ -92,8 +92,14 @@ export default function RutubePlayer({
           }
 
           if (state === 'playing') {
+            lastKnownRutubeTime.current = currentRutubeTimeRef.current;
+            lastTimeCheck.current = Date.now();
+            ignoreEventsUntil.current = Date.now() + 1000;
             onPlay?.(currentRutubeTimeRef.current);
           } else if (state === 'paused' || state === 'stopped') {
+            lastKnownRutubeTime.current = currentRutubeTimeRef.current;
+            lastTimeCheck.current = Date.now();
+            ignoreEventsUntil.current = Date.now() + 1000;
             onPause?.(currentRutubeTimeRef.current);
           }
           break;
@@ -126,7 +132,10 @@ export default function RutubePlayer({
       }
 
       // Check if user manually sought
-      const isUserSeek = deltaPlayer < -1.5 || (deltaPlayer - deltaReal > 3.0);
+      const isUserSeek =
+        currentRutubeStateRef.current === 'playing' &&
+        (deltaPlayer < -1.5 || (deltaPlayer - deltaReal > 3.0 && rutubeTime > 3.0));
+
       if (isUserSeek) {
         ignoreEventsUntil.current = now + 1500;
         onSeek?.(rutubeTime);
