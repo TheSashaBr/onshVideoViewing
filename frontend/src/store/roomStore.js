@@ -38,6 +38,7 @@ export const useRoomStore = create((set, get) => ({
   isHost: false,
   members: [],
   chatMessages: [],
+  lastRemoteAction: null,
   roomState: {
     videoUrl: '',
     videoType: 'youtube',
@@ -56,6 +57,13 @@ export const useRoomStore = create((set, get) => ({
     
     socket.on('message', (msg) => {
       const { type, payload, timestamp, senderId } = msg;
+
+      // Track remote playback actions (from peers or server) to command local player
+      const isRemote = senderId !== userId || senderId === 'SERVER';
+      if (isRemote && ['PLAY', 'PAUSE', 'SEEK', 'SYNC_STATE'].includes(type)) {
+        set({ lastRemoteAction: { type, payload, timestamp, id: Math.random() } });
+      }
+
       // Do not ignore system/room state events such as members or sync
       if (senderId === userId && !['SYNC_STATE', 'MEMBER_JOINED', 'MEMBER_LEFT', 'LOAD_VIDEO'].includes(type)) {
         return;

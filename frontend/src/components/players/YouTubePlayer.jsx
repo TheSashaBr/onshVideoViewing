@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import YouTube from 'react-youtube';
+import { useRoomStore } from '../../store/roomStore';
 
 export default function YouTubePlayer({
   videoId,
@@ -12,103 +13,63 @@ export default function YouTubePlayer({
   const playerRef = useRef(null);
   const ignoreEventsUntil = useRef(0);
   const lastKnownPlayerTime = useRef(0);
-  const lastTimeCheck = useRef(Date.now());
+  const isInitialReady = useRef(false);
 
-  // Sync state from roomState -> YouTube player
+  const lastRemoteAction = useRoomStore(state => state.lastRemoteAction);
+
+  // React strictly to REMOTE actions from other room members or server sync
   useEffect(() => {
+    if (!lastRemoteAction || !playerRef.current) return;
+    const { type, payload, timestamp } = lastRemoteAction;
     const player = playerRef.current;
-    if (!player) return;
 
-    const syncPlayer = async () => {
-      try {
-        const playerState = await player.getPlayerState();
-        const playerTime = await player.getCurrentTime();
+    ignoreEventsUntil.current = Date.now() + 1500;
 
-        let expectedTime = parseFloat(roomState.currentTime || 0);
-        if (roomState.isPlaying) {
-          const elapsed = (Date.now() - (roomState.lastUpdatedAt || Date.now())) / 1000;
-          expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
+    try {
+      if (type === 'PLAY') {
+        if (typeof payload?.position === 'number') {
+          player.seekTo(payload.position, true);
         }
-
-        const drift = Math.abs(playerTime - expectedTime);
-        if (drift > 2.5 && roomState.isPlaying) {
-          ignoreEventsUntil.current = Date.now() + 1500;
-          player.seekTo(expectedTime, true);
+        player.playVideo();
+      } else if (type === 'PAUSE') {
+        player.pauseVideo();
+        if (typeof payload?.position === 'number') {
+          player.seekTo(payload.position, true);
         }
-
-        // YT.PlayerState: PLAYING = 1, PAUSED = 2, BUFFERING = 3
-        if (roomState.isPlaying && playerState !== 1 && playerState !== 3) {
-          ignoreEventsUntil.current = Date.now() + 1500;
+      } else if (type === 'SEEK') {
+        if (typeof payload?.position === 'number') {
+          player.seekTo(payload.position, true);
+        }
+      } else if (type === 'SYNC_STATE') {
+        let currentPos = parseFloat(payload.currentTime || 0);
+        if (payload.isPlaying && timestamp) {
+          const elapsed = (Date.now() - timestamp) / 1000;
+          currentPos += Math.max(0, elapsed * (payload.playbackRate || 1.0));
+        }
+        player.seekTo(currentPos, true);
+        if (payload.isPlaying) {
           player.playVideo();
-        } else if (!roomState.isPlaying && playerState === 1) {
-          ignoreEventsUntil.current = Date.now() + 1500;
+        } else {
           player.pauseVideo();
         }
-      } catch (e) {
-        console.error('YouTube sync error:', e);
       }
-    };
-
-    syncPlayer();
-  }, [roomState]);
-
-  // Periodic drift correction & user seek detection
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const player = playerRef.current;
-      if (!player) return;
-
-      try {
-        const playerTime = await player.getCurrentTime();
-        const playerState = await player.getPlayerState();
-        const now = Date.now();
-        const deltaReal = (now - lastTimeCheck.current) / 1000;
-        const deltaPlayer = playerTime - lastKnownPlayerTime.current;
-
-        lastTimeCheck.current = now;
-        lastKnownPlayerTime.current = playerTime;
-
-        // If we are in an ignored window (programmatic sync), don't check seeks
-        if (now < ignoreEventsUntil.current) {
-          return;
-        }
-
-        // Detect if the USER manually jumped on the timeline:
-        // Only if actively playing and well past initial startup
-        const isUserSeek =
-          playerState === 1 &&
-          (deltaPlayer < -1.5 || (deltaPlayer - deltaReal > 3.0 && playerTime > 3.0));
-
-        if (isUserSeek) {
-          ignoreEventsUntil.current = now + 1500;
-          onSeek?.(playerTime);
-          return;
-        }
-
-        // If not a user seek, but player has drifted behind the room by > 3.5s (e.g. buffering):
-        // Silently catch up locally WITHOUT broadcasting and WITHOUT pausing
-        let expectedTime = parseFloat(roomState.currentTime || 0);
-        if (roomState.isPlaying) {
-          const elapsed = (now - (roomState.lastUpdatedAt || now)) / 1000;
-          expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
-        }
-
-        const drift = Math.abs(playerTime - expectedTime);
-        if (drift > 3.5 && roomState.isPlaying) {
-          ignoreEventsUntil.current = now + 1500;
-          player.seekTo(expectedTime, true);
-        }
-      } catch (e) {}
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [roomState, onSeek]);
+    } catch (err) {
+      console.error('Remote action playback error:', err);
+    }
+  }, [lastRemoteAction]);
 
   const handleReady = (e) => {
     playerRef.current = e.target;
     lastKnownPlayerTime.current = 0;
-    lastTimeCheck.current = Date.now();
+    isInitialReady.current = true;
+
+    // If room is already playing upon joining, sync to current position
+    let expectedTime = parseFloat(roomState.currentTime || 0);
     if (roomState.isPlaying) {
+      const elapsed = (Date.now() - (roomState.lastUpdatedAt || Date.now())) / 1000;
+      expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
+      ignoreEventsUntil.current = Date.now() + 1500;
+      e.target.seekTo(expectedTime, true);
       e.target.playVideo();
     }
   };
@@ -119,8 +80,6 @@ export default function YouTubePlayer({
     }
     const currentTime = await e.target.getCurrentTime();
     lastKnownPlayerTime.current = currentTime;
-    lastTimeCheck.current = Date.now();
-    ignoreEventsUntil.current = Date.now() + 1000;
     onPlay?.(currentTime);
   };
 
@@ -130,10 +89,39 @@ export default function YouTubePlayer({
     }
     const currentTime = await e.target.getCurrentTime();
     lastKnownPlayerTime.current = currentTime;
-    lastTimeCheck.current = Date.now();
-    ignoreEventsUntil.current = Date.now() + 1000;
     onPause?.(currentTime);
   };
+
+  // User seek detection: track significant time jumps during user interaction
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const player = playerRef.current;
+      if (!player) return;
+
+      try {
+        const playerTime = await player.getCurrentTime();
+        const playerState = await player.getPlayerState();
+        const prevTime = lastKnownPlayerTime.current;
+        lastKnownPlayerTime.current = playerTime;
+
+        if (Date.now() < ignoreEventsUntil.current) {
+          return;
+        }
+
+        // Only detect user scrub if player is active and the jump is > 3 seconds away from continuous progression
+        if (playerState === 1 || playerState === 2) {
+          const jump = playerTime - prevTime;
+          // If backwards seek or large forward leap (> 3s within a 1s tick)
+          if (jump < -1.5 || (jump > 3.0 && prevTime > 0.5)) {
+            ignoreEventsUntil.current = Date.now() + 1500;
+            onSeek?.(playerTime);
+          }
+        }
+      } catch (e) {}
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [onSeek]);
 
   const handleError = () => {
     onError?.('Не удалось загрузить видео YouTube. Возможно, автор запретил встраивание.');

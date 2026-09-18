@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
+import { useRoomStore } from '../../store/roomStore';
 
 export default function RutubePlayer({
   videoId,
@@ -14,7 +15,8 @@ export default function RutubePlayer({
   const currentRutubeTimeRef = useRef(0);
   const currentRutubeStateRef = useRef('paused');
   const lastKnownRutubeTime = useRef(0);
-  const lastTimeCheck = useRef(Date.now());
+
+  const lastRemoteAction = useRoomStore(state => state.lastRemoteAction);
 
   const postRutubeCommand = (type, data = {}) => {
     if (iframeRef.current?.contentWindow) {
@@ -25,30 +27,45 @@ export default function RutubePlayer({
     }
   };
 
-  // Sync state from roomState -> Rutube player
+  // React strictly to REMOTE actions from other room members or server sync
   useEffect(() => {
-    if (!isReadyRef.current) return;
+    if (!lastRemoteAction || !isReadyRef.current) return;
+    const { type, payload, timestamp } = lastRemoteAction;
 
-    let expectedTime = parseFloat(roomState.currentTime || 0);
-    if (roomState.isPlaying) {
-      const elapsed = (Date.now() - (roomState.lastUpdatedAt || Date.now())) / 1000;
-      expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
-    }
+    ignoreEventsUntil.current = Date.now() + 1500;
 
-    const drift = Math.abs(currentRutubeTimeRef.current - expectedTime);
-    if (drift > 2.5 && roomState.isPlaying) {
-      ignoreEventsUntil.current = Date.now() + 1500;
-      postRutubeCommand('player:setCurrentTime', { time: Math.max(0, expectedTime) });
+    try {
+      if (type === 'PLAY') {
+        if (typeof payload?.position === 'number') {
+          postRutubeCommand('player:setCurrentTime', { time: payload.position });
+        }
+        postRutubeCommand('player:play');
+      } else if (type === 'PAUSE') {
+        postRutubeCommand('player:pause');
+        if (typeof payload?.position === 'number') {
+          postRutubeCommand('player:setCurrentTime', { time: payload.position });
+        }
+      } else if (type === 'SEEK') {
+        if (typeof payload?.position === 'number') {
+          postRutubeCommand('player:setCurrentTime', { time: payload.position });
+        }
+      } else if (type === 'SYNC_STATE') {
+        let currentPos = parseFloat(payload.currentTime || 0);
+        if (payload.isPlaying && timestamp) {
+          const elapsed = (Date.now() - timestamp) / 1000;
+          currentPos += Math.max(0, elapsed * (payload.playbackRate || 1.0));
+        }
+        postRutubeCommand('player:setCurrentTime', { time: currentPos });
+        if (payload.isPlaying) {
+          postRutubeCommand('player:play');
+        } else {
+          postRutubeCommand('player:pause');
+        }
+      }
+    } catch (err) {
+      console.error('Remote action playback error:', err);
     }
-
-    if (roomState.isPlaying && currentRutubeStateRef.current !== 'playing') {
-      ignoreEventsUntil.current = Date.now() + 1500;
-      postRutubeCommand('player:play');
-    } else if (!roomState.isPlaying && currentRutubeStateRef.current === 'playing') {
-      ignoreEventsUntil.current = Date.now() + 1500;
-      postRutubeCommand('player:pause');
-    }
-  }, [roomState]);
+  }, [lastRemoteAction]);
 
   // Listen to messages from Rutube iframe
   useEffect(() => {
@@ -66,7 +83,6 @@ export default function RutubePlayer({
         case 'player:ready':
           isReadyRef.current = true;
           lastKnownRutubeTime.current = 0;
-          lastTimeCheck.current = Date.now();
           if (roomState.isPlaying) {
             let expectedTime = parseFloat(roomState.currentTime || 0);
             const elapsed = (Date.now() - (roomState.lastUpdatedAt || Date.now())) / 1000;
@@ -93,13 +109,9 @@ export default function RutubePlayer({
 
           if (state === 'playing') {
             lastKnownRutubeTime.current = currentRutubeTimeRef.current;
-            lastTimeCheck.current = Date.now();
-            ignoreEventsUntil.current = Date.now() + 1000;
             onPlay?.(currentRutubeTimeRef.current);
           } else if (state === 'paused' || state === 'stopped') {
             lastKnownRutubeTime.current = currentRutubeTimeRef.current;
-            lastTimeCheck.current = Date.now();
-            ignoreEventsUntil.current = Date.now() + 1000;
             onPause?.(currentRutubeTimeRef.current);
           }
           break;
@@ -115,49 +127,29 @@ export default function RutubePlayer({
     return () => window.removeEventListener('message', handleMessage);
   }, [roomState, onPlay, onPause, onError]);
 
-  // Periodic drift correction & user seek detection
+  // User seek detection: track timeline leaps
   useEffect(() => {
     const interval = setInterval(() => {
       if (!isReadyRef.current) return;
       const rutubeTime = currentRutubeTimeRef.current;
-      const now = Date.now();
-      const deltaReal = (now - lastTimeCheck.current) / 1000;
-      const deltaPlayer = rutubeTime - lastKnownRutubeTime.current;
-
-      lastTimeCheck.current = now;
+      const prevTime = lastKnownRutubeTime.current;
       lastKnownRutubeTime.current = rutubeTime;
 
-      if (now < ignoreEventsUntil.current) {
+      if (Date.now() < ignoreEventsUntil.current) {
         return;
       }
 
-      // Check if user manually sought
-      const isUserSeek =
-        currentRutubeStateRef.current === 'playing' &&
-        (deltaPlayer < -1.5 || (deltaPlayer - deltaReal > 3.0 && rutubeTime > 3.0));
-
-      if (isUserSeek) {
-        ignoreEventsUntil.current = now + 1500;
-        onSeek?.(rutubeTime);
-        return;
-      }
-
-      // If player drifted behind by > 3.5s during playback, quietly catch up locally
-      let expectedTime = parseFloat(roomState.currentTime || 0);
-      if (roomState.isPlaying) {
-        const elapsed = (now - (roomState.lastUpdatedAt || now)) / 1000;
-        expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
-      }
-
-      const drift = Math.abs(rutubeTime - expectedTime);
-      if (drift > 3.5 && roomState.isPlaying) {
-        ignoreEventsUntil.current = now + 1500;
-        postRutubeCommand('player:setCurrentTime', { time: expectedTime });
+      if (currentRutubeStateRef.current === 'playing') {
+        const jump = rutubeTime - prevTime;
+        if (jump < -1.5 || (jump > 3.0 && prevTime > 0.5)) {
+          ignoreEventsUntil.current = Date.now() + 1500;
+          onSeek?.(rutubeTime);
+        }
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [roomState, onSeek]);
+  }, [onSeek]);
 
   const embedUrl = `https://rutube.ru/play/embed/${videoId}?skinColor=000000`;
 
