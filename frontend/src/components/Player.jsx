@@ -38,7 +38,7 @@ export default function Player() {
   };
 
   const handleSeek = (position) => {
-    sendMessage('SEEK', { position });
+    sendMessage('SEEK', { position, isPlaying: roomState.isPlaying });
   };
 
   const handleError = (errMsg) => {

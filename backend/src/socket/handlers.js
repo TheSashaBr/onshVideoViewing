@@ -46,13 +46,19 @@ function setupHandlers(io, socket) {
       });
     }
 
+    let currentPos = parseFloat(room.currentTime || 0);
+    if (room.isPlaying === 'true' && room.lastUpdatedAt) {
+      const elapsed = (Date.now() - parseInt(room.lastUpdatedAt, 10)) / 1000;
+      currentPos += Math.max(0, elapsed * parseFloat(room.playbackRate || 1.0));
+    }
+
     socket.emit('message', {
       type: 'SYNC_STATE',
       roomId,
       senderId: 'SERVER',
       timestamp: Date.now(),
       payload: {
-        currentTime: parseFloat(room.currentTime || 0),
+        currentTime: currentPos,
         isPlaying: room.isPlaying === 'true',
         playbackRate: parseFloat(room.playbackRate || 1.0)
       }
@@ -76,15 +82,25 @@ function setupHandlers(io, socket) {
       switch (type) {
         case 'PLAY':
         case 'PAUSE':
-        case 'SEEK':
+        case 'SEEK': {
+          let isPlayingState = 'false';
+          if (type === 'PLAY') {
+            isPlayingState = 'true';
+          } else if (type === 'PAUSE') {
+            isPlayingState = 'false';
+          } else if (type === 'SEEK') {
+            isPlayingState = payload.isPlaying !== undefined ? String(payload.isPlaying) : (room?.isPlaying || 'true');
+          }
+
           await updateRoomState(roomId, {
             currentTime: payload.position,
-            isPlaying: type === 'PLAY' ? 'true' : 'false',
+            isPlaying: isPlayingState,
             lastUpdatedAt: timestamp,
             lastUpdatedBy: senderId
           });
           broadcast();
           break;
+        }
           
         case 'LOAD_VIDEO':
           await updateRoomState(roomId, {

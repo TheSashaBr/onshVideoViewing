@@ -89,9 +89,18 @@ export const useRoomStore = create((set, get) => ({
           }));
           break;
         case 'PAUSE':
-        case 'SEEK':
           set(state => ({
             roomState: { ...state.roomState, currentTime: payload.position, isPlaying: false, lastUpdatedAt: timestamp }
+          }));
+          break;
+        case 'SEEK':
+          set(state => ({
+            roomState: {
+              ...state.roomState,
+              currentTime: payload.position,
+              isPlaying: payload.isPlaying !== undefined ? payload.isPlaying : state.roomState.isPlaying,
+              lastUpdatedAt: timestamp
+            }
           }));
           break;
         case 'SYNC_STATE':

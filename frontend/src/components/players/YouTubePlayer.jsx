@@ -10,7 +10,9 @@ export default function YouTubePlayer({
   onError,
 }) {
   const playerRef = useRef(null);
-  const ignoreNextEvent = useRef(false);
+  const ignoreEventsUntil = useRef(0);
+  const lastKnownPlayerTime = useRef(0);
+  const lastTimeCheck = useRef(Date.now());
 
   // Sync state from roomState -> YouTube player
   useEffect(() => {
@@ -22,24 +24,24 @@ export default function YouTubePlayer({
         const playerState = await player.getPlayerState();
         const playerTime = await player.getCurrentTime();
 
-        let expectedTime = parseFloat(roomState.currentTime);
+        let expectedTime = parseFloat(roomState.currentTime || 0);
         if (roomState.isPlaying) {
-          const elapsed = (Date.now() - roomState.lastUpdatedAt) / 1000;
-          expectedTime += elapsed * roomState.playbackRate;
+          const elapsed = (Date.now() - (roomState.lastUpdatedAt || Date.now())) / 1000;
+          expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
         }
 
         const drift = Math.abs(playerTime - expectedTime);
-        if (drift > 1.5) {
-          ignoreNextEvent.current = true;
+        if (drift > 2.5) {
+          ignoreEventsUntil.current = Date.now() + 1500;
           player.seekTo(expectedTime, true);
         }
 
         // YT.PlayerState: PLAYING = 1, PAUSED = 2, BUFFERING = 3
         if (roomState.isPlaying && playerState !== 1 && playerState !== 3) {
-          ignoreNextEvent.current = true;
+          ignoreEventsUntil.current = Date.now() + 1500;
           player.playVideo();
         } else if (!roomState.isPlaying && playerState === 1) {
-          ignoreNextEvent.current = true;
+          ignoreEventsUntil.current = Date.now() + 1500;
           player.pauseVideo();
         }
       } catch (e) {
@@ -50,7 +52,7 @@ export default function YouTubePlayer({
     syncPlayer();
   }, [roomState]);
 
-  // Detect local seek by user
+  // Periodic drift correction & user seek detection
   useEffect(() => {
     const interval = setInterval(async () => {
       const player = playerRef.current;
@@ -58,14 +60,39 @@ export default function YouTubePlayer({
 
       try {
         const playerTime = await player.getCurrentTime();
-        let expectedTime = parseFloat(roomState.currentTime);
-        if (roomState.isPlaying) {
-          const elapsed = (Date.now() - roomState.lastUpdatedAt) / 1000;
-          expectedTime += elapsed * roomState.playbackRate;
+        const now = Date.now();
+        const deltaReal = (now - lastTimeCheck.current) / 1000;
+        const deltaPlayer = playerTime - lastKnownPlayerTime.current;
+
+        lastTimeCheck.current = now;
+        lastKnownPlayerTime.current = playerTime;
+
+        // If we are in an ignored window (programmatic sync), don't check seeks
+        if (now < ignoreEventsUntil.current) {
+          return;
         }
 
-        if (Math.abs(playerTime - expectedTime) > 2.0 && !ignoreNextEvent.current) {
+        // Detect if the USER manually jumped on the timeline:
+        // deltaPlayer < -1.5s (jumped back) or jumped forward much faster than real time passed
+        const isUserSeek = deltaPlayer < -1.5 || (deltaPlayer - deltaReal > 3.0);
+        if (isUserSeek) {
+          ignoreEventsUntil.current = now + 1500;
           onSeek?.(playerTime);
+          return;
+        }
+
+        // If not a user seek, but player has drifted behind the room by > 3.5s (e.g. buffering):
+        // Silently catch up locally WITHOUT broadcasting and WITHOUT pausing
+        let expectedTime = parseFloat(roomState.currentTime || 0);
+        if (roomState.isPlaying) {
+          const elapsed = (now - (roomState.lastUpdatedAt || now)) / 1000;
+          expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
+        }
+
+        const drift = Math.abs(playerTime - expectedTime);
+        if (drift > 3.5 && roomState.isPlaying) {
+          ignoreEventsUntil.current = now + 1500;
+          player.seekTo(expectedTime, true);
         }
       } catch (e) {}
     }, 1000);
@@ -75,14 +102,15 @@ export default function YouTubePlayer({
 
   const handleReady = (e) => {
     playerRef.current = e.target;
+    lastKnownPlayerTime.current = 0;
+    lastTimeCheck.current = Date.now();
     if (roomState.isPlaying) {
       e.target.playVideo();
     }
   };
 
   const handlePlay = async (e) => {
-    if (ignoreNextEvent.current) {
-      ignoreNextEvent.current = false;
+    if (Date.now() < ignoreEventsUntil.current) {
       return;
     }
     const currentTime = await e.target.getCurrentTime();
@@ -90,8 +118,7 @@ export default function YouTubePlayer({
   };
 
   const handlePause = async (e) => {
-    if (ignoreNextEvent.current) {
-      ignoreNextEvent.current = false;
+    if (Date.now() < ignoreEventsUntil.current) {
       return;
     }
     const currentTime = await e.target.getCurrentTime();

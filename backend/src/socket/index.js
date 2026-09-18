@@ -20,30 +20,6 @@ function initSocket(server) {
     });
   });
   
-  setInterval(async () => {
-    const { getRoom } = require('../redis/repository');
-    const rooms = io.sockets.adapter.rooms;
-    for (const [roomId, sockets] of rooms.entries()) {
-      if (roomId.length === 36) { // uuid length
-        const room = await getRoom(roomId);
-        if (room) {
-          const syncMsg = {
-            type: 'SYNC_STATE',
-            roomId,
-            senderId: 'SERVER',
-            timestamp: Date.now(),
-            payload: {
-              currentTime: parseFloat(room.currentTime),
-              isPlaying: room.isPlaying === 'true',
-              playbackRate: parseFloat(room.playbackRate)
-            }
-          };
-          io.to(roomId).emit('message', syncMsg);
-        }
-      }
-    }
-  }, 8000);
-
   return io;
 }
 
