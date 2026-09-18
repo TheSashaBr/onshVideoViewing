@@ -51,21 +51,24 @@ export default function Player() {
   if (!parsedCurrent) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-        <div className="bg-gray-800 p-8 rounded-xl max-w-lg w-full shadow-2xl border border-gray-700">
-          <h2 className="text-2xl font-bold mb-3 text-white">Добавить видео или стрим</h2>
+        <div className="bg-gray-900/80 backdrop-blur-sm p-8 rounded-2xl max-w-lg w-full shadow-2xl border border-gray-700/50">
+          <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/20 flex items-center justify-center">
+            <span className="text-3xl">🎬</span>
+          </div>
+          <h2 className="text-xl font-bold mb-2 text-white">Добавьте видео или стрим</h2>
           <p className="text-gray-400 text-sm mb-6">
             Вставьте ссылку на ролик или трансляцию для совместного просмотра
           </p>
 
-          <div className="flex justify-center gap-3 mb-6">
-            <span className="px-3 py-1 bg-red-900/40 border border-red-700/50 text-red-300 rounded-full text-xs font-medium">
-              🔴 YouTube
+          <div className="flex justify-center gap-2 mb-6">
+            <span className="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-full text-xs font-medium">
+              YouTube
             </span>
-            <span className="px-3 py-1 bg-blue-900/40 border border-blue-700/50 text-blue-300 rounded-full text-xs font-medium">
-              🔵 Rutube
+            <span className="px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-full text-xs font-medium">
+              Rutube
             </span>
-            <span className="px-3 py-1 bg-purple-900/40 border border-purple-700/50 text-purple-300 rounded-full text-xs font-medium">
-              🟣 Twitch
+            <span className="px-3 py-1.5 bg-purple-500/10 border border-purple-500/20 text-purple-400 rounded-full text-xs font-medium">
+              Twitch
             </span>
           </div>
 
@@ -75,14 +78,16 @@ export default function Player() {
               placeholder="https://youtu.be/... или rutube.ru/... или twitch.tv/..."
               value={inputUrl}
               onChange={(e) => setInputUrl(e.target.value)}
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-gray-800/80 border border-gray-600/50 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-transparent transition-all"
             />
             {error && (
-              <p className="text-red-400 text-sm text-left">{error}</p>
+              <p className="text-red-400 text-sm text-left flex items-center gap-1.5">
+                <span>⚠️</span> {error}
+              </p>
             )}
             <button
               type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors shadow-lg"
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:scale-[0.98] text-white font-semibold py-3 rounded-xl transition-all shadow-lg shadow-blue-600/20"
             >
               Запустить видео
             </button>

@@ -7,14 +7,13 @@ import Chat from '../components/Chat';
 import Members from '../components/Members';
 import {
   Share2,
-  Maximize2,
   Minimize2,
   RotateCw,
   MessageSquare,
   Users,
-  Copy,
   Check,
 } from 'lucide-react';
+import ToastContainer, { showToast } from '../components/ToastContainer';
 
 export default function Room() {
   const { roomId } = useParams();
@@ -29,6 +28,7 @@ export default function Room() {
   const [isManualCinemaMode, setIsManualCinemaMode] = useState(false);
   const [showFloatingChat, setShowFloatingChat] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [joiningRoom, setJoiningRoom] = useState(false);
 
   const containerRef = useRef(null);
   const joinRoom = useRoomStore(state => state.joinRoom);
@@ -85,10 +85,36 @@ export default function Room() {
     };
   }, []);
 
+  // Toast notifications for member changes
+  const prevMembersRef = useRef([]);
+  useEffect(() => {
+    if (!hasJoined) return;
+    const prev = prevMembersRef.current;
+    const prevIds = new Set(prev.map(m => m.userId));
+    const currIds = new Set(members.map(m => m.userId));
+    const storeUserId = useRoomStore.getState().userId;
+
+    // New members
+    members.forEach(m => {
+      if (!prevIds.has(m.userId) && m.userId !== storeUserId && prev.length > 0) {
+        showToast(`${m.nickname} присоединился`, 'success');
+      }
+    });
+
+    // Left members
+    prev.forEach(m => {
+      if (!currIds.has(m.userId) && m.userId !== storeUserId) {
+        showToast(`${m.nickname} вышел`, 'info');
+      }
+    });
+
+    prevMembersRef.current = members;
+  }, [members, hasJoined]);
+
   const handleJoin = (e) => {
     e.preventDefault();
     if (!nickname.trim()) return;
-
+    setJoiningRoom(true);
     const userId = hostToken || uuidv4();
     joinRoom(roomId, userId, nickname.trim(), isHost);
     setHasJoined(true);
@@ -187,9 +213,17 @@ export default function Room() {
 
             <button
               type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-500 active:scale-[0.98] py-3 rounded-xl font-semibold text-white shadow-lg transition duration-150 text-base"
+              disabled={joiningRoom}
+              className="w-full bg-blue-600 hover:bg-blue-500 active:scale-[0.98] py-3 rounded-xl font-semibold text-white shadow-lg transition duration-150 text-base disabled:opacity-60"
             >
-              Присоединиться
+              {joiningRoom ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Подключение...
+                </span>
+              ) : (
+                'Присоединиться'
+              )}
             </button>
           </form>
         </div>
@@ -205,6 +239,7 @@ export default function Room() {
       ref={containerRef}
       className="flex flex-col md:flex-row h-[100dvh] w-full bg-slate-950 text-white overflow-hidden select-none"
     >
+      <ToastContainer />
       {connectionStatus === 'reconnecting' && (
         <div className="absolute top-0 left-0 right-0 z-50 bg-yellow-600 text-white text-center text-xs py-1 animate-pulse">
           Переподключение к серверу...
