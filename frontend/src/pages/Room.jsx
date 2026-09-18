@@ -35,9 +35,15 @@ export default function Room() {
   const leaveRoom = useRoomStore(state => state.leaveRoom);
   const members = useRoomStore(state => state.members);
   const chatMessages = useRoomStore(state => state.chatMessages);
+  const connectionStatus = useRoomStore(state => state.connectionStatus);
 
-  const hostId = location.state?.hostId;
-  const isHost = !!hostId;
+  // Persist host token across page refreshes
+  const hostTokenFromState = location.state?.hostToken;
+  if (hostTokenFromState && roomId) {
+    sessionStorage.setItem(`onsh_host_${roomId}`, hostTokenFromState);
+  }
+  const hostToken = hostTokenFromState || sessionStorage.getItem(`onsh_host_${roomId}`);
+  const isHost = !!hostToken;
 
   useEffect(() => {
     return () => leaveRoom();
@@ -83,7 +89,7 @@ export default function Room() {
     e.preventDefault();
     if (!nickname.trim()) return;
 
-    const userId = hostId || uuidv4();
+    const userId = hostToken || uuidv4();
     joinRoom(roomId, userId, nickname.trim(), isHost);
     setHasJoined(true);
   };
@@ -199,6 +205,16 @@ export default function Room() {
       ref={containerRef}
       className="flex flex-col md:flex-row h-[100dvh] w-full bg-slate-950 text-white overflow-hidden select-none"
     >
+      {connectionStatus === 'reconnecting' && (
+        <div className="absolute top-0 left-0 right-0 z-50 bg-yellow-600 text-white text-center text-xs py-1 animate-pulse">
+          Переподключение к серверу...
+        </div>
+      )}
+      {connectionStatus === 'disconnected' && hasJoined && (
+        <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white text-center text-xs py-1">
+          Соединение потеряно. Проверьте интернет.
+        </div>
+      )}
       {/* Main Video Section */}
       <div
         className={`flex flex-col min-w-0 transition-all duration-300 ${

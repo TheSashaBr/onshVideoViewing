@@ -1,6 +1,9 @@
-const { getRoom, updateRoomState, addMember, removeMember, getMembers, addChatMessage } = require('../redis/repository');
+const { getRoom, updateRoomState, addMember, removeMember, getMembers, addChatMessage, getChatMessages } = require('../redis/repository');
 
 function setupHandlers(io, socket) {
+  // Simple per-socket message throttle
+  let lastMessageTime = 0;
+  const MIN_MESSAGE_INTERVAL = 100; // ms
   socket.on('join_room', async ({ roomId, userId, nickname, isHost }) => {
     const room = await getRoom(roomId);
     if (!room) {
@@ -11,6 +14,7 @@ function setupHandlers(io, socket) {
     socket.join(roomId);
     socket.roomId = roomId;
     socket.userId = userId;
+    socket.nickname = nickname;
 
     await addMember(roomId, userId, {
       nickname,
@@ -73,6 +77,11 @@ function setupHandlers(io, socket) {
   });
 
   socket.on('message', async (msg) => {
+    if (!msg || typeof msg !== 'object' || !msg.type || !msg.roomId) return;
+    if (msg.senderId !== socket.userId) return; // Prevent spoofing
+    const now_ts = Date.now();
+    if (now_ts - lastMessageTime < MIN_MESSAGE_INTERVAL) return;
+    lastMessageTime = now_ts;
     const { type, roomId, senderId, timestamp, payload } = msg;
     const broadcast = () => socket.to(roomId).emit('message', msg);
     
@@ -114,14 +123,18 @@ function setupHandlers(io, socket) {
           io.to(roomId).emit('message', msg);
           break;
           
-        case 'CHAT_MESSAGE':
+        case 'CHAT_MESSAGE': {
+          const text = typeof payload.text === 'string' ? payload.text.slice(0, 500).trim() : '';
+          if (!text) break;
           await addChatMessage(roomId, {
-            nickname: payload.nickname,
-            text: payload.text,
+            nickname: (payload.nickname || 'Аноним').slice(0, 30),
+            text,
             ts: timestamp
           });
+          msg = { ...msg, payload: { ...payload, text, nickname: (payload.nickname || 'Аноним').slice(0, 30) } };
           broadcast();
           break;
+        }
       }
     } catch (err) {
       console.error('Socket message error:', err);
@@ -139,7 +152,7 @@ function setupHandlers(io, socket) {
         senderId: socket.userId,
         timestamp: Date.now(),
         payload: {
-          nickname: 'User', // Simplified for MVP
+          nickname: socket.nickname || 'User',
           members
         }
       };

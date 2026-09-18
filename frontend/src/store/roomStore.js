@@ -1,34 +1,6 @@
 import { create } from 'zustand';
 import io from 'socket.io-client';
-
-const getApiUrl = () => {
-  let envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl) {
-    envUrl = envUrl.replace(/\/+$/, '');
-    if (envUrl.includes('onsh-backend.onrender.com')) {
-      return 'https://onshvideoviewing.onrender.com';
-    }
-    return envUrl;
-  }
-  const protocol = window.location.protocol;
-  const hostname = window.location.hostname || 'localhost';
-
-  // In production (Vercel / public domain), connect to Render backend by default
-  const isLocal =
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname.startsWith('192.168.') ||
-    hostname.startsWith('10.') ||
-    hostname.startsWith('172.');
-
-  if (!isLocal) {
-    return 'https://onshvideoviewing.onrender.com';
-  }
-
-  return `${protocol}//${hostname}:3001`;
-};
-
-const API_URL = getApiUrl();
+import { API_URL } from '../utils/api';
 
 export const useRoomStore = create((set, get) => ({
   socket: null,
@@ -39,6 +11,7 @@ export const useRoomStore = create((set, get) => ({
   members: [],
   chatMessages: [],
   lastRemoteAction: null,
+  connectionStatus: 'disconnected',
   roomState: {
     videoUrl: '',
     videoType: 'youtube',
@@ -54,6 +27,26 @@ export const useRoomStore = create((set, get) => ({
     set({ socket, roomId, userId, nickname, isHost });
     
     socket.emit('join_room', { roomId, userId, nickname, isHost });
+
+    socket.on('disconnect', (reason) => {
+      console.warn('Socket disconnected:', reason);
+      set({ connectionStatus: 'disconnected' });
+    });
+
+    socket.on('reconnect', () => {
+      console.log('Socket reconnected, rejoining room...');
+      const { roomId, userId, nickname, isHost } = get();
+      socket.emit('join_room', { roomId, userId, nickname, isHost });
+      set({ connectionStatus: 'connected' });
+    });
+
+    socket.on('reconnect_attempt', () => {
+      set({ connectionStatus: 'reconnecting' });
+    });
+
+    socket.on('connect', () => {
+      set({ connectionStatus: 'connected' });
+    });
     
     socket.on('message', (msg) => {
       const { type, payload, timestamp, senderId } = msg;
@@ -204,6 +197,23 @@ export const useRoomStore = create((set, get) => ({
     if (socket) {
       socket.disconnect();
     }
-    set({ socket: null, roomId: null, members: [], chatMessages: [] });
+    set({
+      socket: null,
+      roomId: null,
+      userId: null,
+      nickname: '',
+      isHost: false,
+      members: [],
+      chatMessages: [],
+      lastRemoteAction: null,
+      roomState: {
+        videoUrl: '',
+        videoType: 'youtube',
+        currentTime: 0,
+        isPlaying: false,
+        playbackRate: 1.0,
+        lastUpdatedAt: Date.now()
+      }
+    });
   }
 }));

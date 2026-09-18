@@ -1,35 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Tv, Sparkles, ArrowRight } from 'lucide-react';
-
-const getApiUrl = () => {
-  let envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl) {
-    envUrl = envUrl.replace(/\/+$/, '');
-    if (envUrl.includes('onsh-backend.onrender.com')) {
-      return 'https://onshvideoviewing.onrender.com';
-    }
-    return envUrl;
-  }
-  const protocol = window.location.protocol;
-  const hostname = window.location.hostname || 'localhost';
-
-  // In production (Vercel / public domain), connect to Render backend by default
-  const isLocal =
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname.startsWith('192.168.') ||
-    hostname.startsWith('10.') ||
-    hostname.startsWith('172.');
-
-  if (!isLocal) {
-    return 'https://onshvideoviewing.onrender.com';
-  }
-
-  return `${protocol}//${hostname}:3001`;
-};
-
-const API_URL = getApiUrl();
+import { Sparkles, ArrowRight } from 'lucide-react';
+import { getApiUrl } from '../utils/api';
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
@@ -53,7 +25,7 @@ export default function Home() {
       const data = await res.json();
 
       if (data.roomId) {
-        navigate(`/room/${data.roomId}`, { state: { hostId: data.hostId } });
+        navigate(`/room/${data.roomId}`, { state: { hostToken: data.hostToken || data.hostId } });
       }
     } catch (err) {
       console.error('Create room error:', err);

@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
+import { useRoomStore } from '../../store/roomStore';
 
 export default function TwitchPlayer({
   videoId,
-  twitchType = 'channel', // 'channel' or 'video'
+  twitchType = 'channel',
   roomState,
   onPlay,
   onPause,
@@ -11,12 +12,15 @@ export default function TwitchPlayer({
 }) {
   const containerRef = useRef(null);
   const playerRef = useRef(null);
-  const ignoreNextEvent = useRef(false);
+  const ignoreEventsUntil = useRef(0);
   const isReadyRef = useRef(false);
+  const hasSyncedOnce = useRef(false);
 
+  const lastRemoteAction = useRoomStore(state => state.lastRemoteAction);
+
+  // Initialize Twitch player
   useEffect(() => {
     if (!window.Twitch || !window.Twitch.Player) {
-      // If script is not yet loaded, wait a bit
       const checkTimer = setInterval(() => {
         if (window.Twitch && window.Twitch.Player) {
           clearInterval(checkTimer);
@@ -53,33 +57,22 @@ export default function TwitchPlayer({
 
       player.addEventListener(window.Twitch.Player.READY, () => {
         isReadyRef.current = true;
-        if (roomState.isPlaying) {
-          player.play();
-        } else {
-          player.pause();
-        }
       });
 
       player.addEventListener(window.Twitch.Player.PLAY, () => {
-        if (ignoreNextEvent.current) {
-          ignoreNextEvent.current = false;
-          return;
-        }
+        if (Date.now() < ignoreEventsUntil.current) return;
         const time = twitchType === 'video' ? player.getCurrentTime() : 0;
         onPlay?.(time);
       });
 
       player.addEventListener(window.Twitch.Player.PAUSE, () => {
-        if (ignoreNextEvent.current) {
-          ignoreNextEvent.current = false;
-          return;
-        }
+        if (Date.now() < ignoreEventsUntil.current) return;
         const time = twitchType === 'video' ? player.getCurrentTime() : 0;
         onPause?.(time);
       });
 
       player.addEventListener(window.Twitch.Player.SEEK, () => {
-        if (twitchType === 'video' && !ignoreNextEvent.current) {
+        if (twitchType === 'video' && Date.now() >= ignoreEventsUntil.current) {
           const time = player.getCurrentTime();
           onSeek?.(time);
         }
@@ -90,43 +83,62 @@ export default function TwitchPlayer({
       if (playerRef.current) {
         playerRef.current = null;
         isReadyRef.current = false;
+        hasSyncedOnce.current = false;
       }
     };
   }, [videoId, twitchType]);
 
-  // Sync state from roomState -> Twitch player
+  // React to remote actions
   useEffect(() => {
+    if (!lastRemoteAction || !playerRef.current || !isReadyRef.current) return;
+    const { type, payload, timestamp } = lastRemoteAction;
     const player = playerRef.current;
-    if (!player || !isReadyRef.current) return;
 
     try {
-      if (twitchType === 'video') {
-        const playerTime = player.getCurrentTime();
-        let expectedTime = parseFloat(roomState.currentTime || 0);
-        if (roomState.isPlaying) {
-          const elapsed = (Date.now() - roomState.lastUpdatedAt) / 1000;
-          expectedTime += elapsed * (roomState.playbackRate || 1.0);
+      if (type === 'PLAY') {
+        ignoreEventsUntil.current = Date.now() + 1500;
+        if (twitchType === 'video' && typeof payload?.position === 'number') {
+          player.seek(payload.position);
         }
-
-        const drift = Math.abs(playerTime - expectedTime);
-        if (drift > 2.0) {
-          ignoreNextEvent.current = true;
-          player.seek(expectedTime);
-        }
-      }
-
-      const isPaused = player.isPaused();
-      if (roomState.isPlaying && isPaused) {
-        ignoreNextEvent.current = true;
         player.play();
-      } else if (!roomState.isPlaying && !isPaused) {
-        ignoreNextEvent.current = true;
+      } else if (type === 'PAUSE') {
+        ignoreEventsUntil.current = Date.now() + 1500;
         player.pause();
+        if (twitchType === 'video' && typeof payload?.position === 'number') {
+          player.seek(payload.position);
+        }
+      } else if (type === 'SEEK') {
+        if (twitchType === 'video') {
+          ignoreEventsUntil.current = Date.now() + 1500;
+          if (typeof payload?.position === 'number') {
+            player.seek(payload.position);
+          }
+        }
+      } else if (type === 'SYNC_STATE') {
+        if (hasSyncedOnce.current) return;
+        hasSyncedOnce.current = true;
+        ignoreEventsUntil.current = Date.now() + 1500;
+
+        if (twitchType === 'video') {
+          let currentPos = parseFloat(payload.currentTime || 0);
+          if (payload.isPlaying && timestamp) {
+            const elapsed = (Date.now() - timestamp) / 1000;
+            currentPos += Math.max(0, elapsed * (payload.playbackRate || 1.0));
+          }
+          if (currentPos > 0) {
+            player.seek(currentPos);
+          }
+        }
+        if (payload.isPlaying) {
+          player.play();
+        } else {
+          player.pause();
+        }
       }
-    } catch (e) {
-      console.error('Twitch sync error:', e);
+    } catch (err) {
+      console.error('Twitch remote action error:', err);
     }
-  }, [roomState, twitchType]);
+  }, [lastRemoteAction, twitchType]);
 
   return (
     <div className="w-full h-full relative bg-black">
