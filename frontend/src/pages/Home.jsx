@@ -20,18 +20,29 @@ export default function Home() {
 
   const createRoom = async () => {
     setLoading(true);
+    const apiUrl = getApiUrl();
     try {
-      const res = await fetch(`${API_URL}/api/rooms`, {
+      const res = await fetch(`${apiUrl}/api/rooms`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
+
+      if (!res.ok) {
+        throw new Error(`Код ответа: ${res.status} ${res.statusText}`);
+      }
+
       const data = await res.json();
 
       if (data.roomId) {
         navigate(`/room/${data.roomId}`, { state: { hostId: data.hostId } });
       }
     } catch (err) {
-      console.error(err);
-      alert('Не удалось создать комнату. Проверьте соединение с бэкендом.');
+      console.error('Create room error:', err);
+      alert(
+        `Не удалось создать комнату.\n\nЗапрос отправлялся на:\n${apiUrl}/api/rooms\n\nПричина: ${err.message || 'Ошибка сети'}`
+      );
     } finally {
       setLoading(false);
     }
