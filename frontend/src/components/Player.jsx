@@ -32,11 +32,17 @@ export default function Player() {
   };
 
   const handlePlay = (position) => {
-    sendMessage('PLAY', { position: position || 0 });
+    const safePos = (typeof position === 'number' && position > 1)
+      ? position
+      : (parseFloat(roomState.currentTime) || 0);
+    sendMessage('PLAY', { position: safePos });
   };
 
   const handlePause = (position) => {
-    sendMessage('PAUSE', { position: position || 0 });
+    const safePos = (typeof position === 'number' && position > 1)
+      ? position
+      : (parseFloat(roomState.currentTime) || 0);
+    sendMessage('PAUSE', { position: safePos });
   };
 
   const handleSeek = (position) => {

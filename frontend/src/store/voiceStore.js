@@ -46,6 +46,10 @@ export const useVoiceStore = create((set, get) => ({
     set({ isConnecting: true, error: null });
 
     try {
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error('Голосовой чат требует безопасного соединения (HTTPS)');
+      }
+
       // 1. Get user microphone stream
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -88,7 +92,9 @@ export const useVoiceStore = create((set, get) => ({
     } catch (err) {
       console.error('Error joining voice:', err);
       let message = 'Не удалось получить доступ к микрофону';
-      if (err.name === 'NotAllowedError') {
+      if (err.message?.includes('HTTPS')) {
+        message = err.message;
+      } else if (err.name === 'NotAllowedError') {
         message = 'Доступ к микрофону заблокирован в браузере';
       } else if (err.name === 'NotFoundError') {
         message = 'Микрофон не найден на устройстве';

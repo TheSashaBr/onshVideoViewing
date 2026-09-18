@@ -124,8 +124,8 @@ export const useRoomStore = create((set, get) => ({
               ...state.roomState,
               videoUrl: payload.videoUrl,
               videoType: payload.videoType || 'youtube',
-              currentTime: 0,
-              isPlaying: false,
+              currentTime: payload.currentTime !== undefined ? payload.currentTime : (payload.videoUrl !== state.roomState.videoUrl ? 0 : state.roomState.currentTime),
+              isPlaying: payload.isPlaying !== undefined ? payload.isPlaying : (payload.videoUrl !== state.roomState.videoUrl ? false : state.roomState.isPlaying),
               lastUpdatedAt: timestamp
             }
           }));

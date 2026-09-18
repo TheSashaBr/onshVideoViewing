@@ -11,7 +11,8 @@ export default function YouTubePlayer({
   onError,
 }) {
   const playerRef = useRef(null);
-  const ignoreEventsUntil = useRef(0);
+  // Startup grace period: ignore player initialization events for the first 6 seconds
+  const ignoreEventsUntil = useRef(Date.now() + 6000);
   const lastKnownPlayerTime = useRef(0);
   const isInitialReady = useRef(false);
 
@@ -27,36 +28,36 @@ export default function YouTubePlayer({
 
     try {
       if (type === 'PLAY') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2000;
         if (typeof payload?.position === 'number') {
           player.seekTo(payload.position, true);
         }
         player.playVideo();
       } else if (type === 'PAUSE') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2000;
         player.pauseVideo();
         if (typeof payload?.position === 'number') {
           player.seekTo(payload.position, true);
         }
       } else if (type === 'SEEK') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2000;
         if (typeof payload?.position === 'number') {
           player.seekTo(payload.position, true);
         }
       } else if (type === 'SYNC_STATE') {
         // Only apply initial SYNC_STATE when entering room or on video load!
-        // Never allow repeated server background syncs to violently yank the player to 0
         if (hasSyncedOnce.current) {
           return;
         }
         hasSyncedOnce.current = true;
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2000;
 
         let currentPos = parseFloat(payload.currentTime || 0);
         if (payload.isPlaying && timestamp) {
           const elapsed = (Date.now() - timestamp) / 1000;
           currentPos += Math.max(0, elapsed * (payload.playbackRate || 1.0));
         }
+        lastKnownPlayerTime.current = currentPos;
         if (currentPos > 0) {
           player.seekTo(currentPos, true);
         }
@@ -73,17 +74,22 @@ export default function YouTubePlayer({
 
   const handleReady = (e) => {
     playerRef.current = e.target;
-    lastKnownPlayerTime.current = 0;
     isInitialReady.current = true;
+    ignoreEventsUntil.current = Date.now() + 5000;
 
-    // If room is already playing upon joining, sync to current position
     let expectedTime = parseFloat(roomState.currentTime || 0);
     if (roomState.isPlaying) {
       const elapsed = (Date.now() - (roomState.lastUpdatedAt || Date.now())) / 1000;
       expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
-      ignoreEventsUntil.current = Date.now() + 1500;
+    }
+    lastKnownPlayerTime.current = expectedTime;
+    if (expectedTime > 0) {
       e.target.seekTo(expectedTime, true);
+    }
+    if (roomState.isPlaying) {
       e.target.playVideo();
+    } else {
+      e.target.pauseVideo();
     }
   };
 

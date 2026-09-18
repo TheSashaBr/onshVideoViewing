@@ -15,6 +15,7 @@ function setupHandlers(io, socket) {
     socket.roomId = roomId;
     socket.userId = userId;
     socket.nickname = nickname;
+    socket.joinedAt = Date.now();
 
     await addMember(roomId, userId, {
       nickname,
@@ -36,6 +37,12 @@ function setupHandlers(io, socket) {
     };
     io.to(roomId).emit('message', msg);
 
+    let currentPos = parseFloat(room.currentTime || 0);
+    if (room.isPlaying === 'true' && room.lastUpdatedAt) {
+      const elapsed = (Date.now() - parseInt(room.lastUpdatedAt, 10)) / 1000;
+      currentPos += Math.max(0, elapsed * parseFloat(room.playbackRate || 1.0));
+    }
+
     // Send current room state and history to the newly connected user
     if (room.videoUrl) {
       socket.emit('message', {
@@ -45,15 +52,12 @@ function setupHandlers(io, socket) {
         timestamp: Date.now(),
         payload: {
           videoUrl: room.videoUrl,
-          videoType: room.videoType || 'youtube'
+          videoType: room.videoType || 'youtube',
+          currentTime: currentPos,
+          isPlaying: room.isPlaying === 'true',
+          playbackRate: parseFloat(room.playbackRate || 1.0)
         }
       });
-    }
-
-    let currentPos = parseFloat(room.currentTime || 0);
-    if (room.isPlaying === 'true' && room.lastUpdatedAt) {
-      const elapsed = (Date.now() - parseInt(room.lastUpdatedAt, 10)) / 1000;
-      currentPos += Math.max(0, elapsed * parseFloat(room.playbackRate || 1.0));
     }
 
     socket.emit('message', {
@@ -92,6 +96,36 @@ function setupHandlers(io, socket) {
         case 'PLAY':
         case 'PAUSE':
         case 'SEEK': {
+          const room = await getRoom(roomId);
+          if (!room) return;
+
+          let currentServerPos = parseFloat(room.currentTime || 0);
+          if (room.isPlaying === 'true' && room.lastUpdatedAt) {
+            const elapsed = (now - parseInt(room.lastUpdatedAt, 10)) / 1000;
+            currentServerPos += Math.max(0, elapsed * parseFloat(room.playbackRate || 1.0));
+          }
+
+          // GUARD: If the movie is already playing and progress > 3s,
+          // ignore auto-startup events (reqPos near 0) from recently joined sockets (< 8s ago)
+          const socketAge = now - (socket.joinedAt || 0);
+          const reqPos = parseFloat(payload?.position || 0);
+          if (socketAge < 8000 && currentServerPos > 3 && reqPos < 2) {
+            console.log(`[GUARD] Blocked accidental restart to 0 from newcomer ${socket.userId}`);
+            // Resync the newcomer to the current position
+            socket.emit('message', {
+              type: 'SYNC_STATE',
+              roomId,
+              senderId: 'SERVER',
+              timestamp: now,
+              payload: {
+                currentTime: currentServerPos,
+                isPlaying: room.isPlaying === 'true',
+                playbackRate: parseFloat(room.playbackRate || 1.0)
+              }
+            });
+            return;
+          }
+
           let isPlayingState = 'false';
           if (type === 'PLAY') {
             isPlayingState = 'true';

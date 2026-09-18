@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRoomStore } from '../store/roomStore';
 import { Send } from 'lucide-react';
+import VoiceChat from './VoiceChat';
 
 export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
   const [text, setText] = useState('');
@@ -70,16 +71,19 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
     <div className={`flex flex-col h-full ${isOverlay ? 'bg-[#0a0a0f]/95 backdrop-blur-xl shadow-2xl border border-white/[0.08] rounded-xl' : 'bg-[#0a0a0f]'}`}>
       {/* Header if overlay mode */}
       {isOverlay && (
-        <div className="flex items-center justify-between p-3 border-b border-gray-800 bg-gray-800/80 rounded-t-xl shrink-0">
-          <span className="font-semibold text-sm text-white flex items-center gap-2">
-            💬 Чат трансляции
-          </span>
+        <div className="flex items-center justify-between p-2.5 border-b border-white/[0.08] bg-white/[0.04] rounded-t-xl shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-semibold text-xs text-white shrink-0">
+              💬 Чат
+            </span>
+            <VoiceChat compact />
+          </div>
           {onCloseOverlay && (
             <button
               onClick={onCloseOverlay}
-              className="text-gray-400 hover:text-white text-xs px-2 py-1 rounded bg-gray-700/50 hover:bg-gray-700 transition"
+              className="text-gray-400 hover:text-white text-xs px-2 py-1 rounded bg-white/[0.06] hover:bg-white/[0.12] transition cursor-pointer shrink-0 ml-2"
             >
-              Закрыть
+              ✕
             </button>
           )}
         </div>

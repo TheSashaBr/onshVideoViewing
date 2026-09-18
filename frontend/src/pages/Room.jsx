@@ -40,6 +40,7 @@ export default function Room() {
   const connectionStatus = useRoomStore(state => state.connectionStatus);
   const isJoining = useRoomStore(state => state.isJoining);
   const hasJoinedRoom = useRoomStore(state => state.hasJoinedRoom);
+  const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
 
   // Persist host token across page refreshes
   const hostTokenFromState = location.state?.hostToken;
@@ -327,8 +328,8 @@ export default function Room() {
           {isCinemaMode && (
             <>
               {/* Top controls in cinema mode */}
-              <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-30 pointer-events-none">
-                <div className="pointer-events-auto bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs font-medium text-gray-300 flex items-center gap-2">
+              <div className="absolute top-3 sm:top-4 left-3 right-3 flex items-center justify-between z-40 pointer-events-none pt-safe">
+                <div className="pointer-events-auto bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs font-medium text-gray-300 flex items-center gap-2 shadow-lg">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   <span>{members.length} онлайн</span>
                 </div>
@@ -343,7 +344,7 @@ export default function Room() {
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-semibold transition active:scale-95 ${
                       showFloatingChat
                         ? 'bg-blue-600 text-white border-blue-400 shadow-lg'
-                        : 'bg-black/60 text-gray-200 border-white/10 hover:bg-black/80'
+                        : 'bg-black/70 text-gray-200 border-white/10 hover:bg-black/90'
                     }`}
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
@@ -353,7 +354,7 @@ export default function Room() {
                   {/* Exit fullscreen/rotation */}
                   <button
                     onClick={toggleRotateAndFullscreen}
-                    className="p-2 bg-black/60 hover:bg-black/80 backdrop-blur-md text-white border border-white/10 rounded-full transition active:scale-95"
+                    className="p-2 bg-black/70 hover:bg-black/90 backdrop-blur-md text-white border border-white/10 rounded-full transition active:scale-95"
                     title="Выйти из полноэкранного режима"
                   >
                     {isFullscreen ? (
@@ -367,7 +368,7 @@ export default function Room() {
 
               {/* Floating Chat in Cinema Mode */}
               {showFloatingChat && (
-                <div className="absolute right-3 top-14 bottom-3 w-80 max-w-[85vw] z-40 animate-in fade-in slide-in-from-right duration-200">
+                <div className="absolute right-3 top-16 bottom-4 w-80 max-w-[85vw] z-40 animate-in fade-in slide-in-from-right duration-200">
                   <Chat
                     isOverlay
                     onCloseOverlay={() => setShowFloatingChat(false)}
@@ -410,6 +411,9 @@ export default function Room() {
               >
                 <Users className="w-4 h-4" />
                 <span>Участники ({members.length})</span>
+                {roomVoiceUsers.size > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Идёт голосовой звонок" />
+                )}
               </button>
             </div>
 
@@ -424,7 +428,7 @@ export default function Room() {
       {/* Desktop Sidebar (Only visible on md: screens and above) */}
       {!isCinemaMode && (
         <aside className="hidden md:flex w-80 lg:w-96 bg-[#0a0a0f] border-l border-white/[0.06] flex-col shrink-0 h-full">
-          <div className="h-60 border-b border-white/[0.06] shrink-0 overflow-hidden">
+          <div className="h-[320px] border-b border-white/[0.06] shrink-0 flex flex-col overflow-hidden">
             <Members />
           </div>
           <div className="flex-1 overflow-hidden flex flex-col">

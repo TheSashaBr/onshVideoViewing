@@ -10,7 +10,7 @@ export default function VKVideoPlayer({
   onError,
 }) {
   const iframeRef = useRef(null);
-  const ignoreEventsUntil = useRef(0);
+  const ignoreEventsUntil = useRef(Date.now() + 6000);
   const isReadyRef = useRef(false);
   const hasSyncedOnce = useRef(false);
   const currentTimeRef = useRef(0);

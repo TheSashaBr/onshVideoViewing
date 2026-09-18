@@ -1,6 +1,7 @@
 import { useRoomStore } from '../store/roomStore';
 import { useVoiceStore } from '../store/voiceStore';
 import { Users, Crown, Mic, MicOff, Volume2 } from 'lucide-react';
+import VoiceChat from './VoiceChat';
 
 export default function Members() {
   const members = useRoomStore(state => state.members);
@@ -28,6 +29,11 @@ export default function Members() {
 
   return (
     <div className="flex flex-col h-full bg-[#0a0a0f]">
+      {/* Voice Chat Section */}
+      <div className="p-3 border-b border-white/[0.06] shrink-0 bg-white/[0.01]">
+        <VoiceChat variant="panel" />
+      </div>
+
       <div className="p-3 bg-white/[0.03] font-semibold border-b border-white/[0.06] shrink-0 flex items-center justify-between text-sm text-gray-200">
         <span className="flex items-center gap-2">
           <Users className="w-4 h-4 text-blue-400" />
