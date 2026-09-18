@@ -2,7 +2,10 @@ import { create } from 'zustand';
 import io from 'socket.io-client';
 
 const getApiUrl = () => {
-  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl) {
+    return envUrl.replace(/\/+$/, '');
+  }
   const protocol = window.location.protocol;
   const hostname = window.location.hostname || 'localhost';
   return `${protocol}//${hostname}:3001`;

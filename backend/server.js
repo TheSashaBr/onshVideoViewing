@@ -11,6 +11,14 @@ const server = http.createServer(app);
 app.use(cors());
 app.use(express.json());
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: Date.now() });
+});
+
+app.get('/', (req, res) => {
+  res.send('onsh backend service is online');
+});
+
 app.use('/api/rooms', roomRoutes);
 
 initSocket(server);

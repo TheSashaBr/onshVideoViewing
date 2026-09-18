@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: onsh-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: REDIS_URL
+        sync: false
