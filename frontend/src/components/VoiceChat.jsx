@@ -89,6 +89,42 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
           )}
         </div>
 
+        {/* List of active participants in this voice call */}
+        <div className="flex flex-wrap gap-1.5 mb-2.5">
+          {members
+            .filter(m => roomVoiceUsers.has(String(m.userId)) || roomVoiceUsers.has(m.userId))
+            .map(m => {
+              const isMe = m.userId === currentUserId;
+              const isTalking = talkingUsers.has(m.userId);
+              return (
+                <div
+                  key={m.userId}
+                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs transition-all ${
+                    isTalking
+                      ? 'bg-emerald-500/30 text-emerald-200 ring-1 ring-emerald-400/50 shadow-sm'
+                      : 'bg-white/[0.06] text-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      isTalking
+                        ? 'bg-emerald-400 animate-pulse'
+                        : isMe && isMuted
+                        ? 'bg-red-500'
+                        : 'bg-emerald-500'
+                    }`}
+                  />
+                  <span className="font-medium truncate max-w-[100px]">
+                    {isMe ? 'Вы' : m.nickname}
+                  </span>
+                  {isTalking && (
+                    <Volume2 className="w-3 h-3 text-emerald-400 animate-pulse" />
+                  )}
+                </div>
+              );
+            })}
+        </div>
+
         <div className="flex items-center gap-2">
           {/* Mute button */}
           <button

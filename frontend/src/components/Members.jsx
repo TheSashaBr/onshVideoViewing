@@ -74,8 +74,8 @@ export default function Members() {
                 )}
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
-                {roomVoiceUsers.has(m.userId) && (
-                  talkingUsers.has(m.userId) ? (
+                {(roomVoiceUsers.has(m.userId) || roomVoiceUsers.has(String(m.userId))) && (
+                  (talkingUsers.has(m.userId) || talkingUsers.has(String(m.userId))) ? (
                     <span
                       className="flex items-center gap-1 text-[11px] text-emerald-300 font-medium bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.5 rounded-full animate-pulse"
                       title="Говорит прямо сейчас"

@@ -1,4 +1,7 @@
-const { getRoom, updateRoomState, addMember, removeMember, getMembers, addChatMessage, getChatMessages } = require('../redis/repository');
+const {
+  getRoom, updateRoomState, addMember, removeMember, getMembers,
+  addChatMessage, getChatMessages, addVoiceUser, removeVoiceUser, getVoiceUsers
+} = require('../redis/repository');
 
 function setupHandlers(io, socket) {
   // Simple per-socket message throttle
@@ -77,6 +80,13 @@ function setupHandlers(io, socket) {
       socket.emit('chat_history', chatHistory);
     } catch (e) {
       console.error('Error fetching chat history:', e);
+    }
+
+    try {
+      const voiceUsers = await getVoiceUsers(roomId);
+      socket.emit('webrtc_voice_users_list', { users: voiceUsers });
+    } catch (e) {
+      console.error('Error fetching voice users on join:', e);
     }
   });
 
@@ -158,9 +168,10 @@ function setupHandlers(io, socket) {
           break;
           
         case 'CHAT_MESSAGE': {
-          const text = typeof payload.text === 'string' ? payload.text.slice(0, 500).trim() : '';
+          const text = (payload.text || '').trim().slice(0, 500);
           if (!text) break;
           await addChatMessage(roomId, {
+            senderId,
             nickname: (payload.nickname || 'Аноним').slice(0, 30),
             text,
             ts: timestamp
@@ -191,63 +202,70 @@ function setupHandlers(io, socket) {
     });
   });
 
-  socket.on('webrtc_join_voice', () => {
+  socket.on('webrtc_join_voice', async () => {
     if (!socket.roomId || !socket.userId) return;
     socket.isVoiceActive = true;
     
-    // Notify all peers in room that this user joined voice
-    socket.to(socket.roomId).emit('webrtc_peer_joined_voice', {
-      userId: socket.userId,
-      nickname: socket.nickname
-    });
+    try {
+      await addVoiceUser(socket.roomId, socket.userId);
+      const voiceUsers = await getVoiceUsers(socket.roomId);
 
-    // Return the list of peers already active in voice in this room
-    const roomSockets = io.sockets.adapter.rooms.get(socket.roomId);
-    const existingVoiceUsers = [];
-    if (roomSockets) {
-      for (const id of roomSockets) {
-        const s = io.sockets.sockets.get(id);
-        if (s && s.isVoiceActive && s.userId && s.userId !== socket.userId) {
-          existingVoiceUsers.push({
-            userId: s.userId,
-            nickname: s.nickname
-          });
-        }
-      }
+      // Broadcast the complete active voice list to EVERYONE in the room
+      io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
+
+      // Notify other peers in room so they can send offers to the newcomer
+      socket.to(socket.roomId).emit('webrtc_peer_joined_voice', {
+        userId: socket.userId,
+        nickname: socket.nickname
+      });
+
+      // Return other voice peers to newcomer
+      const otherPeers = voiceUsers
+        .filter(uid => uid !== socket.userId)
+        .map(uid => ({ userId: uid }));
+      socket.emit('webrtc_existing_voice_peers', { users: otherPeers });
+    } catch (err) {
+      console.error('Error in webrtc_join_voice:', err);
     }
-    socket.emit('webrtc_existing_voice_peers', { users: existingVoiceUsers });
   });
 
-  socket.on('webrtc_get_voice_users', () => {
+  socket.on('webrtc_get_voice_users', async () => {
     if (!socket.roomId) return;
-    const roomSockets = io.sockets.adapter.rooms.get(socket.roomId);
-    const voiceUsers = [];
-    if (roomSockets) {
-      for (const id of roomSockets) {
-        const s = io.sockets.sockets.get(id);
-        if (s && s.isVoiceActive && s.userId) {
-          voiceUsers.push(s.userId);
-        }
-      }
+    try {
+      const voiceUsers = await getVoiceUsers(socket.roomId);
+      socket.emit('webrtc_voice_users_list', { users: voiceUsers });
+    } catch (err) {
+      console.error('Error in webrtc_get_voice_users:', err);
     }
-    socket.emit('webrtc_voice_users_list', { users: voiceUsers });
   });
 
-  socket.on('webrtc_leave_voice', () => {
+  socket.on('webrtc_leave_voice', async () => {
     if (!socket.roomId || !socket.userId) return;
     socket.isVoiceActive = false;
-    io.to(socket.roomId).emit('webrtc_peer_left_voice', {
-      userId: socket.userId
-    });
+    try {
+      await removeVoiceUser(socket.roomId, socket.userId);
+      const voiceUsers = await getVoiceUsers(socket.roomId);
+      io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
+      io.to(socket.roomId).emit('webrtc_peer_left_voice', {
+        userId: socket.userId
+      });
+    } catch (err) {
+      console.error('Error in webrtc_leave_voice:', err);
+    }
   });
 
   socket.on('disconnect', async () => {
     if (socket.roomId && socket.userId) {
       if (socket.isVoiceActive) {
         socket.isVoiceActive = false;
-        io.to(socket.roomId).emit('webrtc_peer_left_voice', {
-          userId: socket.userId
-        });
+        try {
+          await removeVoiceUser(socket.roomId, socket.userId);
+          const voiceUsers = await getVoiceUsers(socket.roomId);
+          io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
+          io.to(socket.roomId).emit('webrtc_peer_left_voice', {
+            userId: socket.userId
+          });
+        } catch (e) {}
       }
       socket.to(socket.roomId).emit('message', {
         type: 'TYPING_STATUS',

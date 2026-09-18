@@ -76,8 +76,26 @@ async function getChatMessages(roomId) {
   return messages.map(msg => JSON.parse(msg)).reverse();
 }
 
+async function addVoiceUser(roomId, userId) {
+  const key = `room:${roomId}:voice`;
+  await redisClient.sAdd(key, String(userId));
+  await redisClient.expire(key, ROOM_TTL);
+}
+
+async function removeVoiceUser(roomId, userId) {
+  const key = `room:${roomId}:voice`;
+  await redisClient.sRem(key, String(userId));
+}
+
+async function getVoiceUsers(roomId) {
+  const key = `room:${roomId}:voice`;
+  const users = await redisClient.sMembers(key);
+  return users || [];
+}
+
 module.exports = {
   createRoom, getRoom, updateRoomState,
   addMember, removeMember, getMembers,
-  addChatMessage, getChatMessages
+  addChatMessage, getChatMessages,
+  addVoiceUser, removeVoiceUser, getVoiceUsers
 };

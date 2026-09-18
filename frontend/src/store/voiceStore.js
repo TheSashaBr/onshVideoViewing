@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { useRoomStore } from './roomStore';
 import { showToast } from '../components/ToastContainer';
 
-// Public STUN servers for NAT traversal
+// Public high-reliability STUN servers for NAT traversal
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -10,7 +10,10 @@ const ICE_SERVERS = {
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
+    { urls: 'stun:stun.services.mozilla.com' },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export const useVoiceStore = create((set, get) => ({
@@ -18,23 +21,36 @@ export const useVoiceStore = create((set, get) => ({
   isMuted: false,
   isConnecting: false,
   roomVoiceUsers: new Set(), // Set of all userIds currently in voice in this room
-  activeSpeakers: new Set(), // Set of userIds who are in voice peer connections
+  activeSpeakers: new Set(), // Set of userIds with active peer connections
   talkingUsers: new Set(), // Set of userIds currently speaking (audio level > threshold)
   error: null,
 
   localStream: null,
+  sharedAudioContext: null,
   peerConnections: {}, // { [userId]: RTCPeerConnection }
   remoteAudioElements: {}, // { [userId]: HTMLAudioElement }
-  audioAnalysers: {}, // { [userId]: AnalyserNode }
+  pendingCandidates: {}, // { [userId]: RTCIceCandidateInit[] }
   animationFrameId: null,
 
+  // Global room listener initialized on room join (works even before user clicks join voice)
   initVoiceRoomListeners: (socket) => {
     if (!socket) return;
 
     socket.off('webrtc_voice_users_list');
+    socket.off('webrtc_peer_left_voice_room');
+
     socket.on('webrtc_voice_users_list', ({ users }) => {
       if (Array.isArray(users)) {
         set({ roomVoiceUsers: new Set(users) });
+      }
+    });
+
+    socket.on('webrtc_peer_left_voice', ({ userId }) => {
+      const roomVoiceUsers = new Set(get().roomVoiceUsers);
+      roomVoiceUsers.delete(userId);
+      set({ roomVoiceUsers });
+      if (get().isInVoice) {
+        get().removePeer(userId);
       }
     });
 
@@ -50,14 +66,31 @@ export const useVoiceStore = create((set, get) => ({
         throw new Error('Голосовой чат требует безопасного соединения (HTTPS)');
       }
 
-      // 1. Get user microphone stream
+      // 1. Initialize or resume shared AudioContext on user gesture
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      let ctx = get().sharedAudioContext;
+      if (!ctx || ctx.state === 'closed') {
+        ctx = new AudioCtx();
+      }
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+      set({ sharedAudioContext: ctx });
+
+      // 2. Get user microphone stream with audio enhancements
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          channelCount: 1,
         },
         video: false,
+      });
+
+      // Ensure audio track is enabled
+      stream.getAudioTracks().forEach(track => {
+        track.enabled = true;
       });
 
       set({ localStream: stream });
@@ -66,13 +99,13 @@ export const useVoiceStore = create((set, get) => ({
       const myUserId = useRoomStore.getState().userId;
 
       if (!socket || !socket.connected) {
-        throw new Error('Нет подключения к серверу');
+        throw new Error('Нет подключения к серверу комнаты');
       }
 
-      // 2. Setup socket signaling listeners
+      // 3. Setup WebRTC signaling socket handlers
       get().setupSignaling(socket, myUserId, stream);
 
-      // 3. Notify room members that we joined voice
+      // 4. Notify server that we joined voice
       socket.emit('webrtc_join_voice');
 
       const roomVoiceUsers = new Set(get().roomVoiceUsers);
@@ -80,13 +113,14 @@ export const useVoiceStore = create((set, get) => ({
 
       set({
         isInVoice: true,
+        isMuted: false,
         isConnecting: false,
         roomVoiceUsers,
         activeSpeakers: new Set([myUserId]),
       });
 
-      // 4. Start local speaking detection
-      get().startSpeakingDetection(myUserId, stream, true);
+      // 5. Local speech activity detection
+      get().startLocalSpeechDetection(myUserId, stream, ctx);
 
       showToast('Вы подключились к голосовому чату', 'success');
     } catch (err) {
@@ -105,14 +139,15 @@ export const useVoiceStore = create((set, get) => ({
   },
 
   leaveVoice: () => {
-    const { localStream, peerConnections, remoteAudioElements, animationFrameId } = get();
+    const { localStream, peerConnections, remoteAudioElements, animationFrameId, sharedAudioContext } = get();
     const socket = useRoomStore.getState().socket;
+    const myUserId = useRoomStore.getState().userId;
 
     if (socket && socket.connected) {
       socket.emit('webrtc_leave_voice');
     }
 
-    // Stop local microphone tracks
+    // Stop all microphone tracks
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
     }
@@ -124,7 +159,7 @@ export const useVoiceStore = create((set, get) => ({
       } catch (e) {}
     });
 
-    // Remove and stop all remote audio elements
+    // Remove all remote audio elements
     Object.values(remoteAudioElements).forEach(audio => {
       try {
         audio.pause();
@@ -138,7 +173,6 @@ export const useVoiceStore = create((set, get) => ({
     }
 
     const roomVoiceUsers = new Set(get().roomVoiceUsers);
-    const myUserId = useRoomStore.getState().userId;
     if (myUserId) roomVoiceUsers.delete(myUserId);
 
     set({
@@ -148,6 +182,7 @@ export const useVoiceStore = create((set, get) => ({
       localStream: null,
       peerConnections: {},
       remoteAudioElements: {},
+      pendingCandidates: {},
       roomVoiceUsers,
       activeSpeakers: new Set(),
       talkingUsers: new Set(),
@@ -177,17 +212,16 @@ export const useVoiceStore = create((set, get) => ({
   },
 
   setupSignaling: (socket, myUserId, stream) => {
-    // Remove old listeners to prevent duplicates
     socket.off('webrtc_peer_joined_voice');
-    socket.off('webrtc_peer_left_voice');
-    socket.off('webrtc_signal_relay');
     socket.off('webrtc_existing_voice_peers');
+    socket.off('webrtc_signal_relay');
 
-    // Handle list of peers already active in voice when we joined
-    socket.on('webrtc_existing_voice_peers', ({ users }) => {
+    // List of peers who were already in voice before we joined
+    socket.on('webrtc_existing_voice_peers', async ({ users }) => {
       if (!Array.isArray(users)) return;
       const currentSpeakers = new Set(get().activeSpeakers);
       const currentRoomVoice = new Set(get().roomVoiceUsers);
+
       users.forEach(u => {
         if (u.userId) {
           currentSpeakers.add(u.userId);
@@ -197,7 +231,7 @@ export const useVoiceStore = create((set, get) => ({
       set({ activeSpeakers: currentSpeakers, roomVoiceUsers: currentRoomVoice });
     });
 
-    // When another peer joins voice, create an offer if our ID is initiator (or we are already in voice)
+    // When a new peer joins voice, create an offer to them
     socket.on('webrtc_peer_joined_voice', async ({ userId: peerId, nickname }) => {
       if (peerId === myUserId) return;
 
@@ -209,24 +243,17 @@ export const useVoiceStore = create((set, get) => ({
 
       showToast(`${nickname || 'Участник'} подключился к голосовому чату`, 'info');
 
-      // Create peer connection and offer to the newcomer
+      // Create peer connection as initiator and send offer
       await get().createPeerConnection(peerId, true, stream);
     });
 
-    // When a peer leaves voice
-    socket.on('webrtc_peer_left_voice', ({ userId: peerId }) => {
-      const currentRoomVoice = new Set(get().roomVoiceUsers);
-      currentRoomVoice.delete(peerId);
-      set({ roomVoiceUsers: currentRoomVoice });
-      get().removePeer(peerId);
-    });
-
-    // Incoming WebRTC signal (offer, answer, candidate)
+    // Handle incoming WebRTC signals (offer, answer, ICE candidate)
     socket.on('webrtc_signal_relay', async ({ senderUserId, targetUserId, signal }) => {
-      if (targetUserId !== myUserId) return;
+      if (targetUserId !== myUserId || !signal) return;
 
       let pc = get().peerConnections[senderUserId];
 
+      // If we receive an offer and have no connection yet
       if (!pc && signal.type === 'offer') {
         const currentSpeakers = new Set(get().activeSpeakers);
         currentSpeakers.add(senderUserId);
@@ -234,14 +261,43 @@ export const useVoiceStore = create((set, get) => ({
         currentRoomVoice.add(senderUserId);
         set({ activeSpeakers: currentSpeakers, roomVoiceUsers: currentRoomVoice });
 
-        // Create connection as answerer
         pc = await get().createPeerConnection(senderUserId, false, stream);
+      }
+
+      // Handle ICE Candidate
+      if (signal.candidate) {
+        if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
+          // Queue ICE candidate until remote description is set
+          const pending = get().pendingCandidates[senderUserId] || [];
+          pending.push(signal.candidate);
+          set(state => ({
+            pendingCandidates: { ...state.pendingCandidates, [senderUserId]: pending }
+          }));
+          return;
+        }
+
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        } catch (err) {
+          console.warn('addIceCandidate error:', err);
+        }
+        return;
       }
 
       if (!pc) return;
 
       try {
         if (signal.type === 'offer') {
+          // Perfect negotiation collision check
+          if (pc.signalingState !== 'stable') {
+            const isPolite = myUserId < senderUserId;
+            if (isPolite) {
+              await pc.setLocalDescription({ type: 'rollback' });
+            } else {
+              return; // Impolite ignores colliding offer
+            }
+          }
+
           await pc.setRemoteDescription(new RTCSessionDescription(signal));
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
@@ -250,10 +306,14 @@ export const useVoiceStore = create((set, get) => ({
             targetUserId: senderUserId,
             signal: answer,
           });
+
+          // Flush queued candidates for this peer
+          await get().flushQueuedCandidates(senderUserId, pc);
         } else if (signal.type === 'answer') {
           await pc.setRemoteDescription(new RTCSessionDescription(signal));
-        } else if (signal.candidate) {
-          await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+
+          // Flush queued candidates for this peer
+          await get().flushQueuedCandidates(senderUserId, pc);
         }
       } catch (err) {
         console.error('Error handling WebRTC signal:', err);
@@ -261,16 +321,32 @@ export const useVoiceStore = create((set, get) => ({
     });
   },
 
+  flushQueuedCandidates: async (peerId, pc) => {
+    const queue = get().pendingCandidates[peerId] || [];
+    for (const cand of queue) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (e) {
+        console.warn('Error flushing queued ICE candidate:', e);
+      }
+    }
+    set(state => {
+      const nextPending = { ...state.pendingCandidates };
+      delete nextPending[peerId];
+      return { pendingCandidates: nextPending };
+    });
+  },
+
   createPeerConnection: async (peerId, isInitiator, stream) => {
     const socket = useRoomStore.getState().socket;
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
-    // Add local tracks to send to peer
+    // Add local microphone audio tracks
     stream.getAudioTracks().forEach(track => {
       pc.addTrack(track, stream);
     });
 
-    // Send ICE candidates to peer via socket
+    // Send local ICE candidates to peer
     pc.onicecandidate = (event) => {
       if (event.candidate && socket) {
         socket.emit('webrtc_signal', {
@@ -280,14 +356,40 @@ export const useVoiceStore = create((set, get) => ({
       }
     };
 
-    // Receive incoming audio track from peer
+    // Receive incoming remote audio track
     pc.ontrack = (event) => {
       const remoteStream = event.streams[0];
+      const ctx = get().sharedAudioContext;
+
+      // 1. Direct Web Audio API playback (immune to HTML5 autoplay policy)
+      if (ctx) {
+        try {
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+          const source = ctx.createMediaStreamSource(remoteStream);
+          source.connect(ctx.destination);
+
+          // Connect to analyser for speech detection
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          analyser.smoothingTimeConstant = 0.4;
+          source.connect(analyser);
+          get().startSpeechVisualizerLoop(peerId, analyser);
+        } catch (e) {
+          console.warn('Web Audio direct routing error:', e);
+        }
+      }
+
+      // 2. HTML Audio Element fallback
       let audio = get().remoteAudioElements[peerId];
       if (!audio) {
-        audio = new Audio();
+        audio = document.createElement('audio');
         audio.autoplay = true;
         audio.playsInline = true;
+        audio.muted = false;
+        audio.volume = 1.0;
+        audio.style.display = 'none';
         document.body.appendChild(audio);
 
         set(state => ({
@@ -296,14 +398,19 @@ export const useVoiceStore = create((set, get) => ({
       }
 
       audio.srcObject = remoteStream;
-      audio.play().catch(e => console.warn('Autoplay prevented on audio:', e));
+      audio.play().catch(e => {
+        console.warn('HTMLAudio fallback play prevented (Web Audio handles playback):', e);
+      });
+    };
 
-      // Speaking detection for remote peer
-      get().startSpeakingDetection(peerId, remoteStream, false);
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed') {
+        pc.restartIce?.();
+      }
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         get().removePeer(peerId);
       }
     };
@@ -351,6 +458,9 @@ export const useVoiceStore = create((set, get) => ({
     const updatedAudios = { ...get().remoteAudioElements };
     delete updatedAudios[peerId];
 
+    const updatedPending = { ...get().pendingCandidates };
+    delete updatedPending[peerId];
+
     const updatedSpeakers = new Set(get().activeSpeakers);
     updatedSpeakers.delete(peerId);
 
@@ -360,65 +470,63 @@ export const useVoiceStore = create((set, get) => ({
     set({
       peerConnections: updatedPcs,
       remoteAudioElements: updatedAudios,
+      pendingCandidates: updatedPending,
       activeSpeakers: updatedSpeakers,
       talkingUsers: updatedTalking,
     });
   },
 
-  startSpeakingDetection: (userId, stream, isLocal = false) => {
+  startLocalSpeechDetection: (userId, stream, ctx) => {
     try {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 512;
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.4;
 
-      const source = audioContext.createMediaStreamSource(stream);
+      const source = ctx.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-      const checkAudioLevel = () => {
-        if (!get().isInVoice) {
-          audioContext.close().catch(() => {});
-          return;
-        }
-
-        // If muted locally, force not talking
-        if (isLocal && get().isMuted) {
-          const current = new Set(get().talkingUsers);
-          if (current.has(userId)) {
-            current.delete(userId);
-            set({ talkingUsers: current });
-          }
-          requestAnimationFrame(checkAudioLevel);
-          return;
-        }
-
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
-        }
-        const average = sum / dataArray.length;
-
-        // Threshold for human speech activity
-        const isTalking = average > 14;
-        const currentTalking = new Set(get().talkingUsers);
-
-        if (isTalking && !currentTalking.has(userId)) {
-          currentTalking.add(userId);
-          set({ talkingUsers: currentTalking });
-        } else if (!isTalking && currentTalking.has(userId)) {
-          currentTalking.delete(userId);
-          set({ talkingUsers: currentTalking });
-        }
-
-        requestAnimationFrame(checkAudioLevel);
-      };
-
-      requestAnimationFrame(checkAudioLevel);
+      get().startSpeechVisualizerLoop(userId, analyser, true);
     } catch (e) {
-      console.warn('AudioAnalyser speech detection not supported:', e);
+      console.warn('Local speech detection setup error:', e);
     }
+  },
+
+  startSpeechVisualizerLoop: (userId, analyser, isLocal = false) => {
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    const check = () => {
+      if (!get().isInVoice) return;
+
+      if (isLocal && get().isMuted) {
+        const current = new Set(get().talkingUsers);
+        if (current.has(userId)) {
+          current.delete(userId);
+          set({ talkingUsers: current });
+        }
+        requestAnimationFrame(check);
+        return;
+      }
+
+      analyser.getByteFrequencyData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
+      }
+      const avg = sum / dataArray.length;
+      const isTalking = avg > 12;
+
+      const current = new Set(get().talkingUsers);
+      if (isTalking && !current.has(userId)) {
+        current.add(userId);
+        set({ talkingUsers: current });
+      } else if (!isTalking && current.has(userId)) {
+        current.delete(userId);
+        set({ talkingUsers: current });
+      }
+
+      requestAnimationFrame(check);
+    };
+
+    requestAnimationFrame(check);
   },
 }));
