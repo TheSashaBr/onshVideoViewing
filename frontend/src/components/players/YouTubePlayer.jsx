@@ -136,8 +136,18 @@ export default function YouTubePlayer({
     return () => clearInterval(interval);
   }, [onSeek]);
 
-  const handleError = () => {
-    onError?.('Не удалось загрузить видео YouTube. Возможно, автор запретил встраивание.');
+  const handleError = (e) => {
+    console.error('YouTube player error:', e);
+    const errorCode = e?.data;
+    let message = 'Не удалось загрузить видео YouTube. Возможно, автор запретил встраивание.';
+    if (errorCode === 101 || errorCode === 150) {
+      message = 'Это видео запрещено к просмотру на сторонних сайтах его автором.';
+    } else if (errorCode === 100) {
+      message = 'Видео не найдено или удалено.';
+    } else if (errorCode === 2) {
+      message = 'Неверный идентификатор видео YouTube.';
+    }
+    onError?.(message);
   };
 
   return (

@@ -6,18 +6,65 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
   const [text, setText] = useState('');
   const messages = useRoomStore(state => state.chatMessages);
   const sendChat = useRoomStore(state => state.sendChat);
+  const sendTyping = useRoomStore(state => state.sendTyping);
+  const typingUsers = useRoomStore(state => state.typingUsers);
+  const currentUserId = useRoomStore(state => state.userId);
   const bottomRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setText(val);
+
+    if (val.trim()) {
+      if (!typingTimeoutRef.current) {
+        sendTyping(true);
+      } else {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      typingTimeoutRef.current = setTimeout(() => {
+        sendTyping(false);
+        typingTimeoutRef.current = null;
+      }, 2500);
+    } else {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+      sendTyping(false);
+    }
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!text.trim()) return;
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    sendTyping(false);
     sendChat(text.trim());
     setText('');
   };
+
+  // Build typing label from other users
+  const activeTypers = Object.entries(typingUsers)
+    .filter(([uid]) => uid !== currentUserId)
+    .map(([, info]) => info.nickname);
+
+  let typingLabel = '';
+  if (activeTypers.length === 1) {
+    typingLabel = `${activeTypers[0]} печатает...`;
+  } else if (activeTypers.length === 2) {
+    typingLabel = `${activeTypers[0]} и ${activeTypers[1]} печатают...`;
+  } else if (activeTypers.length > 2) {
+    typingLabel = `${activeTypers[0]} и ещё ${activeTypers.length - 1} печатают...`;
+  }
 
   return (
     <div className={`flex flex-col h-full ${isOverlay ? 'bg-[#0a0a0f]/95 backdrop-blur-xl shadow-2xl border border-white/[0.08] rounded-xl' : 'bg-[#0a0a0f]'}`}>
@@ -59,6 +106,18 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
         )}
       </div>
 
+      {/* Typing indicator */}
+      {typingLabel && (
+        <div className="px-3.5 py-1 text-[11px] text-gray-400 flex items-center gap-1.5 shrink-0 bg-white/[0.02] border-t border-white/[0.04]">
+          <span className="flex gap-0.5 items-center">
+            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </span>
+          <span className="italic">{typingLabel}</span>
+        </div>
+      )}
+
       {/* Message input */}
       <form
         onSubmit={handleSubmit}
@@ -67,7 +126,7 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
         <input
           type="text"
           value={text}
-          onChange={e => setText(e.target.value)}
+          onChange={handleInputChange}
           placeholder="Написать сообщение..."
           className="flex-1 bg-white/[0.05] hover:bg-white/[0.07] border border-white/[0.08] rounded-lg px-3.5 py-2 text-base sm:text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all"
         />

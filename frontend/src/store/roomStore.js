@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import io from 'socket.io-client';
 import { API_URL } from '../utils/api';
+import { showToast } from '../components/ToastContainer';
 
 export const useRoomStore = create((set, get) => ({
   socket: null,
@@ -10,8 +11,11 @@ export const useRoomStore = create((set, get) => ({
   isHost: false,
   members: [],
   chatMessages: [],
+  typingUsers: {}, // { [userId]: { nickname: string, timeoutId: number } }
   lastRemoteAction: null,
   connectionStatus: 'disconnected',
+  isJoining: false,
+  hasJoinedRoom: false,
   roomState: {
     videoUrl: '',
     videoType: 'youtube',
@@ -24,7 +28,7 @@ export const useRoomStore = create((set, get) => ({
   joinRoom: (roomId, userId, nickname, isHost) => {
     const socket = io(API_URL);
     
-    set({ socket, roomId, userId, nickname, isHost });
+    set({ socket, roomId, userId, nickname, isHost, isJoining: true, hasJoinedRoom: false });
     
     socket.emit('join_room', { roomId, userId, nickname, isHost });
 
@@ -49,6 +53,8 @@ export const useRoomStore = create((set, get) => ({
     });
     
     socket.on('message', (msg) => {
+      // Once any message arrives from room, we are confirmed in room
+      set({ isJoining: false, hasJoinedRoom: true });
       const { type, payload, timestamp, senderId } = msg;
 
       // Track remote playback actions (from peers or server) to command local player
@@ -57,20 +63,60 @@ export const useRoomStore = create((set, get) => ({
         set({ lastRemoteAction: { type, payload, timestamp, id: Math.random() } });
       }
 
-      // Do not ignore system/room state events such as members or sync
+      // Do not ignore system/room state events such as members, sync or typing
       if (senderId === userId && !['SYNC_STATE', 'MEMBER_JOINED', 'MEMBER_LEFT', 'LOAD_VIDEO'].includes(type)) {
         return;
       }
       
       switch (type) {
         case 'MEMBER_JOINED':
+          set({ members: payload.members });
+          if (senderId !== userId && payload?.nickname) {
+            showToast(`${payload.nickname} вошёл в комнату`, 'success');
+          }
+          break;
         case 'MEMBER_LEFT':
           set({ members: payload.members });
+          if (senderId !== userId && payload?.nickname) {
+            showToast(`${payload.nickname} вышел из комнаты`, 'info');
+          }
           break;
         case 'CHAT_MESSAGE':
-          set(state => ({
-            chatMessages: [{ nickname: payload.nickname, text: payload.text, ts: timestamp }, ...state.chatMessages].slice(0, 100)
-          }));
+          set(state => {
+            const nextTyping = { ...state.typingUsers };
+            if (nextTyping[senderId]) {
+              clearTimeout(nextTyping[senderId].timeoutId);
+              delete nextTyping[senderId];
+            }
+            return {
+              chatMessages: [{ nickname: payload.nickname, text: payload.text, ts: timestamp }, ...state.chatMessages].slice(0, 100),
+              typingUsers: nextTyping
+            };
+          });
+          break;
+        case 'TYPING_STATUS':
+          set(state => {
+            const nextTyping = { ...state.typingUsers };
+            if (nextTyping[senderId]) {
+              clearTimeout(nextTyping[senderId].timeoutId);
+              delete nextTyping[senderId];
+            }
+            if (payload?.isTyping) {
+              const timeoutId = setTimeout(() => {
+                const current = get().typingUsers;
+                if (current[senderId]) {
+                  const updated = { ...current };
+                  delete updated[senderId];
+                  set({ typingUsers: updated });
+                }
+              }, 4000);
+              nextTyping[senderId] = {
+                nickname: payload.nickname || 'Кто-то',
+                timeoutId
+              };
+            }
+            return { typingUsers: nextTyping };
+          });
           break;
         case 'LOAD_VIDEO':
           set(state => ({
@@ -191,12 +237,18 @@ export const useRoomStore = create((set, get) => ({
       chatMessages: [{ nickname, text, ts: Date.now() }, ...state.chatMessages].slice(0, 100)
     }));
   },
+
+  sendTyping: (isTyping) => {
+    const { nickname } = get();
+    get().sendMessage('TYPING_STATUS', { nickname, isTyping });
+  },
   
   leaveRoom: () => {
-    const { socket } = get();
+    const { socket, typingUsers } = get();
     if (socket) {
       socket.disconnect();
     }
+    Object.values(typingUsers).forEach(t => clearTimeout(t.timeoutId));
     set({
       socket: null,
       roomId: null,
@@ -205,7 +257,10 @@ export const useRoomStore = create((set, get) => ({
       isHost: false,
       members: [],
       chatMessages: [],
+      typingUsers: {},
       lastRemoteAction: null,
+      isJoining: false,
+      hasJoinedRoom: false,
       roomState: {
         videoUrl: '',
         videoType: 'youtube',

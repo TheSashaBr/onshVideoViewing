@@ -135,6 +135,11 @@ function setupHandlers(io, socket) {
           broadcast();
           break;
         }
+
+        case 'TYPING_STATUS': {
+          broadcast();
+          break;
+        }
       }
     } catch (err) {
       console.error('Socket message error:', err);
@@ -143,6 +148,16 @@ function setupHandlers(io, socket) {
 
   socket.on('disconnect', async () => {
     if (socket.roomId && socket.userId) {
+      socket.to(socket.roomId).emit('message', {
+        type: 'TYPING_STATUS',
+        roomId: socket.roomId,
+        senderId: socket.userId,
+        timestamp: Date.now(),
+        payload: {
+          nickname: socket.nickname || 'User',
+          isTyping: false
+        }
+      });
       await removeMember(socket.roomId, socket.userId);
       const members = await getMembers(socket.roomId);
       

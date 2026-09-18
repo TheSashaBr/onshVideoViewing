@@ -28,7 +28,6 @@ export default function Room() {
   const [isManualCinemaMode, setIsManualCinemaMode] = useState(() => window.innerWidth < 768);
   const [showFloatingChat, setShowFloatingChat] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [joiningRoom, setJoiningRoom] = useState(false);
 
   const containerRef = useRef(null);
   const joinRoom = useRoomStore(state => state.joinRoom);
@@ -36,6 +35,8 @@ export default function Room() {
   const members = useRoomStore(state => state.members);
   const chatMessages = useRoomStore(state => state.chatMessages);
   const connectionStatus = useRoomStore(state => state.connectionStatus);
+  const isJoining = useRoomStore(state => state.isJoining);
+  const hasJoinedRoom = useRoomStore(state => state.hasJoinedRoom);
 
   // Persist host token across page refreshes
   const hostTokenFromState = location.state?.hostToken;
@@ -85,36 +86,11 @@ export default function Room() {
     };
   }, []);
 
-  // Toast notifications for member changes
-  const prevMembersRef = useRef([]);
-  useEffect(() => {
-    if (!hasJoined) return;
-    const prev = prevMembersRef.current;
-    const prevIds = new Set(prev.map(m => m.userId));
-    const currIds = new Set(members.map(m => m.userId));
-    const storeUserId = useRoomStore.getState().userId;
-
-    // New members
-    members.forEach(m => {
-      if (!prevIds.has(m.userId) && m.userId !== storeUserId && prev.length > 0) {
-        showToast(`${m.nickname} присоединился`, 'success');
-      }
-    });
-
-    // Left members
-    prev.forEach(m => {
-      if (!currIds.has(m.userId) && m.userId !== storeUserId) {
-        showToast(`${m.nickname} вышел`, 'info');
-      }
-    });
-
-    prevMembersRef.current = members;
-  }, [members, hasJoined]);
+  // Toast notifications are handled directly by roomStore upon incoming MEMBER_JOINED and MEMBER_LEFT messages
 
   const handleJoin = (e) => {
     e.preventDefault();
     if (!nickname.trim()) return;
-    setJoiningRoom(true);
     const userId = hostToken || uuidv4();
     joinRoom(roomId, userId, nickname.trim(), isHost);
     setHasJoined(true);
@@ -238,15 +214,29 @@ export default function Room() {
   return (
     <div
       ref={containerRef}
-      className="flex flex-col md:flex-row h-[100dvh] w-full bg-[#0a0a0f] text-white overflow-hidden select-none"
+      className="flex flex-col md:flex-row h-[100dvh] w-full bg-[#0a0a0f] text-white overflow-hidden select-none relative"
     >
       <ToastContainer />
+
+      {/* Loading overlay right after joining until room data arrives */}
+      {isJoining && !hasJoinedRoom && (
+        <div className="absolute inset-0 z-50 bg-[#0a0a0f]/90 backdrop-blur-md flex flex-col items-center justify-center p-4">
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="w-12 h-12 border-3 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+            <div className="space-y-1">
+              <p className="text-base font-medium text-white">Входим в комнату...</p>
+              <p className="text-xs text-gray-500">Подключение к серверу и загрузка состояния</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {connectionStatus === 'reconnecting' && (
         <div className="absolute top-0 left-0 right-0 z-50 bg-yellow-600 text-white text-center text-xs py-1 animate-pulse">
           Переподключение к серверу...
         </div>
       )}
-      {connectionStatus === 'disconnected' && hasJoined && (
+      {connectionStatus === 'disconnected' && hasJoined && !isJoining && (
         <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white text-center text-xs py-1">
           Соединение потеряно. Проверьте интернет.
         </div>
