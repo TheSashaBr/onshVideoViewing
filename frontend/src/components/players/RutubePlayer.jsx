@@ -27,35 +27,46 @@ export default function RutubePlayer({
     }
   };
 
+  const hasSyncedOnce = useRef(false);
+
   // React strictly to REMOTE actions from other room members or server sync
   useEffect(() => {
     if (!lastRemoteAction || !isReadyRef.current) return;
     const { type, payload, timestamp } = lastRemoteAction;
 
-    ignoreEventsUntil.current = Date.now() + 1500;
-
     try {
       if (type === 'PLAY') {
+        ignoreEventsUntil.current = Date.now() + 1500;
         if (typeof payload?.position === 'number') {
           postRutubeCommand('player:setCurrentTime', { time: payload.position });
         }
         postRutubeCommand('player:play');
       } else if (type === 'PAUSE') {
+        ignoreEventsUntil.current = Date.now() + 1500;
         postRutubeCommand('player:pause');
         if (typeof payload?.position === 'number') {
           postRutubeCommand('player:setCurrentTime', { time: payload.position });
         }
       } else if (type === 'SEEK') {
+        ignoreEventsUntil.current = Date.now() + 1500;
         if (typeof payload?.position === 'number') {
           postRutubeCommand('player:setCurrentTime', { time: payload.position });
         }
       } else if (type === 'SYNC_STATE') {
+        if (hasSyncedOnce.current) {
+          return;
+        }
+        hasSyncedOnce.current = true;
+        ignoreEventsUntil.current = Date.now() + 1500;
+
         let currentPos = parseFloat(payload.currentTime || 0);
         if (payload.isPlaying && timestamp) {
           const elapsed = (Date.now() - timestamp) / 1000;
           currentPos += Math.max(0, elapsed * (payload.playbackRate || 1.0));
         }
-        postRutubeCommand('player:setCurrentTime', { time: currentPos });
+        if (currentPos > 0) {
+          postRutubeCommand('player:setCurrentTime', { time: currentPos });
+        }
         if (payload.isPlaying) {
           postRutubeCommand('player:play');
         } else {

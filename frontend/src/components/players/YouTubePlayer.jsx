@@ -17,36 +17,49 @@ export default function YouTubePlayer({
 
   const lastRemoteAction = useRoomStore(state => state.lastRemoteAction);
 
+  const hasSyncedOnce = useRef(false);
+
   // React strictly to REMOTE actions from other room members or server sync
   useEffect(() => {
     if (!lastRemoteAction || !playerRef.current) return;
     const { type, payload, timestamp } = lastRemoteAction;
     const player = playerRef.current;
 
-    ignoreEventsUntil.current = Date.now() + 1500;
-
     try {
       if (type === 'PLAY') {
+        ignoreEventsUntil.current = Date.now() + 1500;
         if (typeof payload?.position === 'number') {
           player.seekTo(payload.position, true);
         }
         player.playVideo();
       } else if (type === 'PAUSE') {
+        ignoreEventsUntil.current = Date.now() + 1500;
         player.pauseVideo();
         if (typeof payload?.position === 'number') {
           player.seekTo(payload.position, true);
         }
       } else if (type === 'SEEK') {
+        ignoreEventsUntil.current = Date.now() + 1500;
         if (typeof payload?.position === 'number') {
           player.seekTo(payload.position, true);
         }
       } else if (type === 'SYNC_STATE') {
+        // Only apply initial SYNC_STATE when entering room or on video load!
+        // Never allow repeated server background syncs to violently yank the player to 0
+        if (hasSyncedOnce.current) {
+          return;
+        }
+        hasSyncedOnce.current = true;
+        ignoreEventsUntil.current = Date.now() + 1500;
+
         let currentPos = parseFloat(payload.currentTime || 0);
         if (payload.isPlaying && timestamp) {
           const elapsed = (Date.now() - timestamp) / 1000;
           currentPos += Math.max(0, elapsed * (payload.playbackRate || 1.0));
         }
-        player.seekTo(currentPos, true);
+        if (currentPos > 0) {
+          player.seekTo(currentPos, true);
+        }
         if (payload.isPlaying) {
           player.playVideo();
         } else {

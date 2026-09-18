@@ -112,9 +112,14 @@ export const useRoomStore = create((set, get) => ({
           }));
           break;
         case 'SYNC_STATE':
-          set(state => ({
-            roomState: { ...state.roomState, ...payload, lastUpdatedAt: timestamp }
-          }));
+          set(state => {
+            if (state.roomState.isPlaying && (parseFloat(payload.currentTime) === 0 || !payload.currentTime)) {
+              return state;
+            }
+            return {
+              roomState: { ...state.roomState, ...payload, lastUpdatedAt: timestamp }
+            };
+          });
           break;
       }
     });
