@@ -28,20 +28,33 @@ export default function YouTubePlayer({
 
     try {
       if (type === 'PLAY') {
-        ignoreEventsUntil.current = Date.now() + 2000;
+        ignoreEventsUntil.current = Date.now() + 2500;
         if (typeof payload?.position === 'number') {
-          player.seekTo(payload.position, true);
+          lastKnownPlayerTime.current = payload.position;
+          try {
+            const curTime = player.getCurrentTime ? player.getCurrentTime() : 0;
+            if (Math.abs(curTime - payload.position) > 2.5) {
+              player.seekTo(payload.position, true);
+            }
+          } catch (e) {}
         }
         player.playVideo();
       } else if (type === 'PAUSE') {
-        ignoreEventsUntil.current = Date.now() + 2000;
+        ignoreEventsUntil.current = Date.now() + 2500;
         player.pauseVideo();
         if (typeof payload?.position === 'number') {
-          player.seekTo(payload.position, true);
+          lastKnownPlayerTime.current = payload.position;
+          try {
+            const curTime = player.getCurrentTime ? player.getCurrentTime() : 0;
+            if (Math.abs(curTime - payload.position) > 2.5) {
+              player.seekTo(payload.position, true);
+            }
+          } catch (e) {}
         }
       } else if (type === 'SEEK') {
-        ignoreEventsUntil.current = Date.now() + 2000;
+        ignoreEventsUntil.current = Date.now() + 2500;
         if (typeof payload?.position === 'number') {
+          lastKnownPlayerTime.current = payload.position;
           player.seekTo(payload.position, true);
         }
       } else if (type === 'SYNC_STATE') {
@@ -50,7 +63,7 @@ export default function YouTubePlayer({
           return;
         }
         hasSyncedOnce.current = true;
-        ignoreEventsUntil.current = Date.now() + 2000;
+        ignoreEventsUntil.current = Date.now() + 2500;
 
         let currentPos = parseFloat(payload.currentTime || 0);
         if (payload.isPlaying && timestamp) {
@@ -115,7 +128,14 @@ export default function YouTubePlayer({
   useEffect(() => {
     const interval = setInterval(async () => {
       const player = playerRef.current;
-      if (!player) return;
+      if (!player || typeof player.getCurrentTime !== 'function') return;
+
+      if (Date.now() < ignoreEventsUntil.current) {
+        try {
+          lastKnownPlayerTime.current = await player.getCurrentTime();
+        } catch (e) {}
+        return;
+      }
 
       try {
         const playerTime = await player.getCurrentTime();
@@ -123,16 +143,12 @@ export default function YouTubePlayer({
         const prevTime = lastKnownPlayerTime.current;
         lastKnownPlayerTime.current = playerTime;
 
-        if (Date.now() < ignoreEventsUntil.current) {
-          return;
-        }
-
-        // Only detect user scrub if player is active and the jump is > 3 seconds away from continuous progression
+        // Only detect user scrub if player is active and the jump is > 2.5 seconds away from continuous progression
         if (playerState === 1 || playerState === 2) {
           const jump = playerTime - prevTime;
-          // If backwards seek or large forward leap (> 3s within a 1s tick)
-          if (jump < -1.5 || (jump > 3.0 && prevTime > 0.5)) {
-            ignoreEventsUntil.current = Date.now() + 1500;
+          // If backwards seek (< -2.5s) or large forward jump (> 4s within a 1s tick)
+          if (jump < -2.5 || (jump > 4.0 && prevTime > 0.5)) {
+            ignoreEventsUntil.current = Date.now() + 2500;
             onSeek?.(playerTime);
           }
         }

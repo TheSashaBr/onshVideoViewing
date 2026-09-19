@@ -36,20 +36,27 @@ export default function RutubePlayer({
 
     try {
       if (type === 'PLAY') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2500;
         if (typeof payload?.position === 'number') {
-          postRutubeCommand('player:setCurrentTime', { time: payload.position });
+          const cur = currentRutubeTimeRef.current;
+          if (Math.abs(cur - payload.position) > 2.5) {
+            postRutubeCommand('player:setCurrentTime', { time: payload.position });
+          }
         }
         postRutubeCommand('player:play');
       } else if (type === 'PAUSE') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2500;
         postRutubeCommand('player:pause');
         if (typeof payload?.position === 'number') {
-          postRutubeCommand('player:setCurrentTime', { time: payload.position });
+          const cur = currentRutubeTimeRef.current;
+          if (Math.abs(cur - payload.position) > 2.5) {
+            postRutubeCommand('player:setCurrentTime', { time: payload.position });
+          }
         }
       } else if (type === 'SEEK') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2500;
         if (typeof payload?.position === 'number') {
+          currentRutubeTimeRef.current = payload.position;
           postRutubeCommand('player:setCurrentTime', { time: payload.position });
         }
       } else if (type === 'SYNC_STATE') {

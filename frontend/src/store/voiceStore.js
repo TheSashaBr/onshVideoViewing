@@ -2,16 +2,30 @@ import { create } from 'zustand';
 import { useRoomStore } from './roomStore';
 import { showToast } from '../components/ToastContainer';
 
-// Public high-reliability STUN servers for NAT traversal
+// High-reliability STUN and free TURN relay servers for cross-network / mobile NAT traversal
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:global.stun.twilio.com:3478' },
-    { urls: 'stun:stun.services.mozilla.com' },
+    { urls: 'stun:openrelay.metered.ca:80' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -37,20 +51,21 @@ export const useVoiceStore = create((set, get) => ({
     if (!socket) return;
 
     socket.off('webrtc_voice_users_list');
-    socket.off('webrtc_peer_left_voice_room');
+    socket.off('webrtc_peer_left_voice');
 
     socket.on('webrtc_voice_users_list', ({ users }) => {
       if (Array.isArray(users)) {
-        set({ roomVoiceUsers: new Set(users) });
+        set({ roomVoiceUsers: new Set(users.map(u => String(u))) });
       }
     });
 
     socket.on('webrtc_peer_left_voice', ({ userId }) => {
+      const uidStr = String(userId);
       const roomVoiceUsers = new Set(get().roomVoiceUsers);
-      roomVoiceUsers.delete(userId);
+      roomVoiceUsers.delete(uidStr);
       set({ roomVoiceUsers });
       if (get().isInVoice) {
-        get().removePeer(userId);
+        get().removePeer(uidStr);
       }
     });
 
@@ -73,7 +88,7 @@ export const useVoiceStore = create((set, get) => ({
         ctx = new AudioCtx();
       }
       if (ctx.state === 'suspended') {
-        await ctx.resume();
+        await ctx.resume().catch(() => {});
       }
       set({ sharedAudioContext: ctx });
 
@@ -96,7 +111,7 @@ export const useVoiceStore = create((set, get) => ({
       set({ localStream: stream });
 
       const socket = useRoomStore.getState().socket;
-      const myUserId = useRoomStore.getState().userId;
+      const myUserId = String(useRoomStore.getState().userId);
 
       if (!socket || !socket.connected) {
         throw new Error('Нет подключения к серверу комнаты');
@@ -141,7 +156,7 @@ export const useVoiceStore = create((set, get) => ({
   leaveVoice: () => {
     const { localStream, peerConnections, remoteAudioElements, animationFrameId, sharedAudioContext } = get();
     const socket = useRoomStore.getState().socket;
-    const myUserId = useRoomStore.getState().userId;
+    const myUserId = String(useRoomStore.getState().userId || '');
 
     if (socket && socket.connected) {
       socket.emit('webrtc_leave_voice');
@@ -204,7 +219,7 @@ export const useVoiceStore = create((set, get) => ({
 
     set({ isMuted: newMuted });
     if (newMuted) {
-      const myUserId = useRoomStore.getState().userId;
+      const myUserId = String(useRoomStore.getState().userId);
       const current = new Set(get().talkingUsers);
       current.delete(myUserId);
       set({ talkingUsers: current });
@@ -224,16 +239,26 @@ export const useVoiceStore = create((set, get) => ({
 
       users.forEach(u => {
         if (u.userId) {
-          currentSpeakers.add(u.userId);
-          currentRoomVoice.add(u.userId);
+          const uid = String(u.userId);
+          currentSpeakers.add(uid);
+          currentRoomVoice.add(uid);
         }
       });
       set({ activeSpeakers: currentSpeakers, roomVoiceUsers: currentRoomVoice });
+
+      // Automatically initiate WebRTC peer connections with existing participants in voice
+      for (const u of users) {
+        const peerId = String(u.userId);
+        if (peerId && peerId !== String(myUserId) && !get().peerConnections[peerId]) {
+          await get().createPeerConnection(peerId, true, stream);
+        }
+      }
     });
 
     // When a new peer joins voice, create an offer to them
-    socket.on('webrtc_peer_joined_voice', async ({ userId: peerId, nickname }) => {
-      if (peerId === myUserId) return;
+    socket.on('webrtc_peer_joined_voice', async ({ userId: rawPeerId, nickname }) => {
+      const peerId = String(rawPeerId);
+      if (peerId === String(myUserId)) return;
 
       const currentSpeakers = new Set(get().activeSpeakers);
       currentSpeakers.add(peerId);
@@ -243,13 +268,18 @@ export const useVoiceStore = create((set, get) => ({
 
       showToast(`${nickname || 'Участник'} подключился к голосовому чату`, 'info');
 
-      // Create peer connection as initiator and send offer
-      await get().createPeerConnection(peerId, true, stream);
+      // Create peer connection as initiator and send offer if not already connecting
+      if (!get().peerConnections[peerId]) {
+        await get().createPeerConnection(peerId, true, stream);
+      }
     });
 
     // Handle incoming WebRTC signals (offer, answer, ICE candidate)
-    socket.on('webrtc_signal_relay', async ({ senderUserId, targetUserId, signal }) => {
-      if (targetUserId !== myUserId || !signal) return;
+    socket.on('webrtc_signal_relay', async ({ senderUserId: rawSender, targetUserId: rawTarget, signal }) => {
+      const senderUserId = String(rawSender);
+      const targetUserId = String(rawTarget);
+
+      if (targetUserId !== String(myUserId) || !signal) return;
 
       let pc = get().peerConnections[senderUserId];
 
@@ -277,7 +307,7 @@ export const useVoiceStore = create((set, get) => ({
         }
 
         try {
-          await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          await pc.addIceCandidate(signal.candidate);
         } catch (err) {
           console.warn('addIceCandidate error:', err);
         }
@@ -290,7 +320,7 @@ export const useVoiceStore = create((set, get) => ({
         if (signal.type === 'offer') {
           // Perfect negotiation collision check
           if (pc.signalingState !== 'stable') {
-            const isPolite = myUserId < senderUserId;
+            const isPolite = String(myUserId) < String(senderUserId);
             if (isPolite) {
               await pc.setLocalDescription({ type: 'rollback' });
             } else {
@@ -325,7 +355,7 @@ export const useVoiceStore = create((set, get) => ({
     const queue = get().pendingCandidates[peerId] || [];
     for (const cand of queue) {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(cand));
+        await pc.addIceCandidate(cand);
       } catch (e) {
         console.warn('Error flushing queued ICE candidate:', e);
       }
@@ -358,10 +388,15 @@ export const useVoiceStore = create((set, get) => ({
 
     // Receive incoming remote audio track
     pc.ontrack = (event) => {
-      const remoteStream = event.streams[0];
+      // Safe fallback for browsers where event.streams is empty in Unified Plan
+      const remoteStream = (event.streams && event.streams[0])
+        ? event.streams[0]
+        : new MediaStream([event.track]);
+
       const ctx = get().sharedAudioContext;
 
-      // 1. Direct Web Audio API playback (immune to HTML5 autoplay policy)
+      // 1. Direct Web Audio API playback
+      let webAudioSuccess = false;
       if (ctx) {
         try {
           if (ctx.state === 'suspended') {
@@ -376,18 +411,19 @@ export const useVoiceStore = create((set, get) => ({
           analyser.smoothingTimeConstant = 0.4;
           source.connect(analyser);
           get().startSpeechVisualizerLoop(peerId, analyser);
+          webAudioSuccess = true;
         } catch (e) {
           console.warn('Web Audio direct routing error:', e);
         }
       }
 
-      // 2. HTML Audio Element fallback
+      // 2. HTML Audio Element (muted by default if Web Audio succeeds to prevent double-echo)
       let audio = get().remoteAudioElements[peerId];
       if (!audio) {
         audio = document.createElement('audio');
         audio.autoplay = true;
         audio.playsInline = true;
-        audio.muted = false;
+        audio.muted = webAudioSuccess; // Only unmute if Web Audio failed
         audio.volume = 1.0;
         audio.style.display = 'none';
         document.body.appendChild(audio);
@@ -399,7 +435,10 @@ export const useVoiceStore = create((set, get) => ({
 
       audio.srcObject = remoteStream;
       audio.play().catch(e => {
-        console.warn('HTMLAudio fallback play prevented (Web Audio handles playback):', e);
+        if (!webAudioSuccess) {
+          audio.muted = false;
+          audio.play().catch(err => console.warn('Audio element play failed:', err));
+        }
       });
     };
 
@@ -436,14 +475,15 @@ export const useVoiceStore = create((set, get) => ({
   },
 
   removePeer: (peerId) => {
-    const pc = get().peerConnections[peerId];
+    const uid = String(peerId);
+    const pc = get().peerConnections[uid];
     if (pc) {
       try {
         pc.close();
       } catch (e) {}
     }
 
-    const audio = get().remoteAudioElements[peerId];
+    const audio = get().remoteAudioElements[uid];
     if (audio) {
       try {
         audio.pause();
@@ -453,19 +493,19 @@ export const useVoiceStore = create((set, get) => ({
     }
 
     const updatedPcs = { ...get().peerConnections };
-    delete updatedPcs[peerId];
+    delete updatedPcs[uid];
 
     const updatedAudios = { ...get().remoteAudioElements };
-    delete updatedAudios[peerId];
+    delete updatedAudios[uid];
 
     const updatedPending = { ...get().pendingCandidates };
-    delete updatedPending[peerId];
+    delete updatedPending[uid];
 
     const updatedSpeakers = new Set(get().activeSpeakers);
-    updatedSpeakers.delete(peerId);
+    updatedSpeakers.delete(uid);
 
     const updatedTalking = new Set(get().talkingUsers);
-    updatedTalking.delete(peerId);
+    updatedTalking.delete(uid);
 
     set({
       peerConnections: updatedPcs,
@@ -485,7 +525,7 @@ export const useVoiceStore = create((set, get) => ({
       const source = ctx.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      get().startSpeechVisualizerLoop(userId, analyser, true);
+      get().startSpeechVisualizerLoop(String(userId), analyser, true);
     } catch (e) {
       console.warn('Local speech detection setup error:', e);
     }
@@ -493,14 +533,15 @@ export const useVoiceStore = create((set, get) => ({
 
   startSpeechVisualizerLoop: (userId, analyser, isLocal = false) => {
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    const uid = String(userId);
 
     const check = () => {
       if (!get().isInVoice) return;
 
       if (isLocal && get().isMuted) {
         const current = new Set(get().talkingUsers);
-        if (current.has(userId)) {
-          current.delete(userId);
+        if (current.has(uid)) {
+          current.delete(uid);
           set({ talkingUsers: current });
         }
         requestAnimationFrame(check);
@@ -516,11 +557,11 @@ export const useVoiceStore = create((set, get) => ({
       const isTalking = avg > 12;
 
       const current = new Set(get().talkingUsers);
-      if (isTalking && !current.has(userId)) {
-        current.add(userId);
+      if (isTalking && !current.has(uid)) {
+        current.add(uid);
         set({ talkingUsers: current });
-      } else if (!isTalking && current.has(userId)) {
-        current.delete(userId);
+      } else if (!isTalking && current.has(uid)) {
+        current.delete(uid);
         set({ talkingUsers: current });
       }
 

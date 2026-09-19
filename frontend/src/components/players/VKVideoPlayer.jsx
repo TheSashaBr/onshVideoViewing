@@ -32,20 +32,27 @@ export default function VKVideoPlayer({
 
     try {
       if (type === 'PLAY') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2500;
         if (typeof payload?.position === 'number') {
-          postCommand('seek', payload.position);
+          const cur = currentTimeRef.current;
+          if (Math.abs(cur - payload.position) > 2.5) {
+            postCommand('seek', payload.position);
+          }
         }
         postCommand('play');
       } else if (type === 'PAUSE') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2500;
         postCommand('pause');
         if (typeof payload?.position === 'number') {
-          postCommand('seek', payload.position);
+          const cur = currentTimeRef.current;
+          if (Math.abs(cur - payload.position) > 2.5) {
+            postCommand('seek', payload.position);
+          }
         }
       } else if (type === 'SEEK') {
-        ignoreEventsUntil.current = Date.now() + 1500;
+        ignoreEventsUntil.current = Date.now() + 2500;
         if (typeof payload?.position === 'number') {
+          currentTimeRef.current = payload.position;
           postCommand('seek', payload.position);
         }
       } else if (type === 'SYNC_STATE') {

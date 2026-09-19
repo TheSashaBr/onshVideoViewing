@@ -196,8 +196,8 @@ function setupHandlers(io, socket) {
     if (!socket.roomId || !socket.userId) return;
     // Relay signaling offer/answer/candidate to specific target peer in the room
     io.to(socket.roomId).emit('webrtc_signal_relay', {
-      senderUserId: socket.userId,
-      targetUserId,
+      senderUserId: String(socket.userId),
+      targetUserId: String(targetUserId),
       signal
     });
   });
@@ -215,14 +215,14 @@ function setupHandlers(io, socket) {
 
       // Notify other peers in room so they can send offers to the newcomer
       socket.to(socket.roomId).emit('webrtc_peer_joined_voice', {
-        userId: socket.userId,
+        userId: String(socket.userId),
         nickname: socket.nickname
       });
 
       // Return other voice peers to newcomer
       const otherPeers = voiceUsers
-        .filter(uid => uid !== socket.userId)
-        .map(uid => ({ userId: uid }));
+        .filter(uid => String(uid) !== String(socket.userId))
+        .map(uid => ({ userId: String(uid) }));
       socket.emit('webrtc_existing_voice_peers', { users: otherPeers });
     } catch (err) {
       console.error('Error in webrtc_join_voice:', err);
@@ -247,7 +247,7 @@ function setupHandlers(io, socket) {
       const voiceUsers = await getVoiceUsers(socket.roomId);
       io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
       io.to(socket.roomId).emit('webrtc_peer_left_voice', {
-        userId: socket.userId
+        userId: String(socket.userId)
       });
     } catch (err) {
       console.error('Error in webrtc_leave_voice:', err);
@@ -263,7 +263,7 @@ function setupHandlers(io, socket) {
           const voiceUsers = await getVoiceUsers(socket.roomId);
           io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
           io.to(socket.roomId).emit('webrtc_peer_left_voice', {
-            userId: socket.userId
+            userId: String(socket.userId)
           });
         } catch (e) {}
       }

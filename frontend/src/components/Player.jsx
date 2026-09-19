@@ -32,14 +32,14 @@ export default function Player() {
   };
 
   const handlePlay = (position) => {
-    const safePos = (typeof position === 'number' && position > 1)
+    const safePos = (typeof position === 'number' && !isNaN(position))
       ? position
       : (parseFloat(roomState.currentTime) || 0);
     sendMessage('PLAY', { position: safePos });
   };
 
   const handlePause = (position) => {
-    const safePos = (typeof position === 'number' && position > 1)
+    const safePos = (typeof position === 'number' && !isNaN(position))
       ? position
       : (parseFloat(roomState.currentTime) || 0);
     sendMessage('PAUSE', { position: safePos });
