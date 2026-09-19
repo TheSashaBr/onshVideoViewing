@@ -28,18 +28,18 @@ export default function Members() {
       : [];
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0f]">
+    <div className="flex flex-col h-full bg-transparent">
       {/* Voice Chat Section */}
-      <div className="p-3 border-b border-white/[0.06] shrink-0 bg-white/[0.01]">
+      <div className="p-3 border-b border-border-subtle shrink-0 bg-white/[0.01]">
         <VoiceChat variant="panel" />
       </div>
 
-      <div className="p-3 bg-white/[0.03] font-semibold border-b border-white/[0.06] shrink-0 flex items-center justify-between text-sm text-gray-200">
+      <div className="p-3 bg-white/[0.02] font-semibold border-b border-border-subtle shrink-0 flex items-center justify-between text-sm text-gray-200">
         <span className="flex items-center gap-2">
-          <Users className="w-4 h-4 text-blue-400" />
+          <Users className="w-4 h-4 text-accent" />
           Участники комнаты
         </span>
-        <span className="bg-blue-600/30 text-blue-300 text-xs px-2 py-0.5 rounded-full font-medium">
+        <span className="bg-accent/15 text-accent text-xs px-2.5 py-0.5 rounded-full font-semibold border border-accent/25">
           {displayMembers.length}
         </span>
       </div>
@@ -50,17 +50,17 @@ export default function Members() {
           return (
             <div
               key={m.userId}
-              className={`flex items-center justify-between p-2 rounded-lg transition-colors text-sm ${
+              className={`flex items-center justify-between p-2.5 rounded-xl transition-colors text-sm ${
                 isMe
-                  ? 'bg-blue-950/40 border border-blue-800/40'
-                  : 'bg-gray-800/40 hover:bg-gray-800/80'
+                  ? 'bg-accent/15 border border-accent/30 shadow-sm'
+                  : 'bg-white/[0.04] hover:bg-white/[0.08] border border-border-subtle'
               }`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <span
                   className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                     isMe
-                      ? 'bg-blue-400 ring-2 ring-blue-400/30'
+                      ? 'bg-accent ring-2 ring-accent/30'
                       : 'bg-emerald-500 ring-2 ring-emerald-500/20'
                   }`}
                 />
@@ -68,7 +68,7 @@ export default function Members() {
                   {m.nickname}
                 </span>
                 {isMe && (
-                  <span className="text-[11px] text-blue-300 font-semibold bg-blue-500/20 px-1.5 py-0.5 rounded shrink-0">
+                  <span className="text-[11px] text-accent font-semibold bg-accent/20 px-1.5 py-0.5 rounded-md shrink-0">
                     Вы
                   </span>
                 )}

@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Tv,
   ArrowRight,
+  X,
 } from 'lucide-react';
 import { showToast } from '../components/ToastContainer';
 
@@ -40,6 +41,7 @@ export default function Room() {
   const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'members'
   const [hasUnreadChat, setHasUnreadChat] = useState(false);
   const [reconnectSeconds, setReconnectSeconds] = useState(0);
+  const [showMobileMembersSheet, setShowMobileMembersSheet] = useState(false);
 
   const [isLandscape, setIsLandscape] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -134,6 +136,54 @@ export default function Room() {
       setHasUnreadChat(false);
     }
   };
+
+  // Touch gesture handling for mobile tab swiping between Chat and Members
+  const touchStartX = useRef(0);
+  const touchStartY = useRef(0);
+
+  const handleTouchStart = (e) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e) => {
+    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
+    const deltaY = e.changedTouches[0].clientY - touchStartY.current;
+
+    // Trigger horizontal swipe only when predominantly horizontal and delta > 45px
+    if (Math.abs(deltaX) > Math.abs(deltaY) * 1.3 && Math.abs(deltaX) > 45) {
+      if (deltaX < 0 && activeTab === 'chat') {
+        handleSelectTab('members');
+      } else if (deltaX > 0 && activeTab === 'members') {
+        handleSelectTab('chat');
+      }
+    }
+  };
+
+  // Touch gesture handling for dismissing mobile members bottom sheet
+  const sheetTouchStartY = useRef(0);
+
+  const handleSheetTouchStart = (e) => {
+    sheetTouchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleSheetTouchEnd = (e) => {
+    const deltaY = e.changedTouches[0].clientY - sheetTouchStartY.current;
+    if (deltaY > 60) {
+      setShowMobileMembersSheet(false);
+    }
+  };
+
+  // Escape key handler to close bottom sheet
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && showMobileMembersSheet) {
+        setShowMobileMembersSheet(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showMobileMembersSheet]);
 
   // Watch connection status changes for feedback
   const prevConnectionStatusRef = useRef(connectionStatus);
@@ -427,6 +477,19 @@ export default function Room() {
             <div className="flex items-center gap-1.5 sm:gap-2">
               <VoiceChat />
 
+              {/* Mobile Members Bottom Sheet Trigger */}
+              <button
+                onClick={() => setShowMobileMembersSheet(true)}
+                className="md:hidden flex items-center gap-1.5 px-2.5 py-1.5 bg-white/[0.05] hover:bg-white/[0.09] active:scale-95 text-xs font-medium rounded-xl text-gray-200 border border-border-subtle transition cursor-pointer"
+                title="Список участников"
+              >
+                <Users className="w-3.5 h-3.5 text-accent" />
+                <span className="font-semibold">{members.length}</span>
+                {roomVoiceUsers.size > 0 && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                )}
+              </button>
+
               <button
                 onClick={handleShare}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.05] hover:bg-white/[0.09] active:scale-95 text-xs font-medium rounded-xl text-gray-200 border border-border-subtle transition cursor-pointer"
@@ -478,6 +541,19 @@ export default function Room() {
           }`}
         >
           <Player />
+
+          {/* Mobile Floating Cinema Mode Button (FAB) */}
+          {!isCinemaMode && (
+            <button
+              onClick={toggleRotateAndFullscreen}
+              className="md:hidden absolute bottom-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 bg-black/75 hover:bg-black/90 active:scale-95 backdrop-blur-md text-white border border-white/20 rounded-full text-xs font-semibold shadow-glass transition-all cursor-pointer"
+              title="Полноэкранный просмотр (Кино)"
+              aria-label="Включить режим Кино"
+            >
+              <Maximize2 className="w-3.5 h-3.5 text-accent" />
+              <span>Кино</span>
+            </button>
+          )}
 
           {/* Floating Controls in Cinema/Landscape Mode */}
           {isCinemaMode && (
@@ -534,14 +610,23 @@ export default function Room() {
         {/* Mobile Tabs & Content (Only visible on small screens when NOT in cinema mode) */}
         {!isCinemaMode && (
           <div className="flex flex-col flex-1 min-h-0 md:hidden bg-surface">
-            {/* Mobile Tab Selector */}
-            <div className="flex border-b border-border-subtle bg-surface/90 shrink-0 p-1.5 gap-1">
+            {/* Mobile Tab Selector with sliding active pill */}
+            <div className="relative flex border-b border-border-subtle bg-surface/90 shrink-0 p-1.5 gap-1">
+              {/* Sliding active pill indicator */}
+              <div
+                className="absolute top-1.5 bottom-1.5 rounded-xl bg-accent/20 border border-accent/40 shadow-sm transition-all duration-300 ease-out pointer-events-none"
+                style={{
+                  left: activeTab === 'chat' ? '6px' : 'calc(50% + 2px)',
+                  width: 'calc(50% - 8px)',
+                }}
+              />
+
               <button
                 onClick={() => handleSelectTab('chat')}
-                className={`flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                className={`relative z-10 flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer ${
                   activeTab === 'chat'
-                    ? 'bg-accent/15 text-white border border-accent/40'
-                    : 'text-gray-400 hover:text-gray-200 border border-transparent'
+                    ? 'text-white'
+                    : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
                 <MessageSquare className="w-4 h-4 text-accent" />
@@ -553,10 +638,10 @@ export default function Room() {
 
               <button
                 onClick={() => handleSelectTab('members')}
-                className={`flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                className={`relative z-10 flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer ${
                   activeTab === 'members'
-                    ? 'bg-accent/15 text-white border border-accent/40'
-                    : 'text-gray-400 hover:text-gray-200 border border-transparent'
+                    ? 'text-white'
+                    : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
                 <Users className="w-4 h-4 text-accent" />
@@ -570,9 +655,25 @@ export default function Room() {
               </button>
             </div>
 
-            {/* Tab content area */}
-            <div className="flex-1 min-h-0 overflow-hidden">
-              {activeTab === 'chat' ? <Chat /> : <Members />}
+            {/* Swipeable Tab Content with smooth horizontal slide */}
+            <div
+              className="flex-1 min-h-0 overflow-hidden relative"
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+            >
+              <div
+                className="flex h-full w-[200%] transition-transform duration-300 ease-out"
+                style={{
+                  transform: activeTab === 'chat' ? 'translateX(0%)' : 'translateX(-50%)',
+                }}
+              >
+                <div className="w-1/2 h-full min-h-0 flex flex-col">
+                  <Chat />
+                </div>
+                <div className="w-1/2 h-full min-h-0 flex flex-col">
+                  <Members />
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -625,6 +726,50 @@ export default function Room() {
             {activeTab === 'chat' ? <Chat /> : <Members />}
           </div>
         </aside>
+      )}
+
+      {/* Mobile Bottom Sheet for Members */}
+      {showMobileMembersSheet && (
+        <div className="fixed inset-0 z-50 md:hidden flex flex-col justify-end">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setShowMobileMembersSheet(false)}
+          />
+
+          {/* Sheet Container */}
+          <div
+            className="relative z-10 w-full max-h-[82vh] bg-surface-raised border-t border-border-medium rounded-t-3xl shadow-glass-lg flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300 pb-safe"
+            onTouchStart={handleSheetTouchStart}
+            onTouchEnd={handleSheetTouchEnd}
+          >
+            {/* Drag Handle & Header */}
+            <div className="pt-3 pb-2.5 px-4 border-b border-border-subtle bg-surface/80 flex flex-col shrink-0 select-none">
+              <div className="w-10 h-1 bg-white/25 rounded-full mx-auto mb-2.5 cursor-grab active:cursor-grabbing" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-accent" />
+                  <span className="font-bold text-sm text-white">Участники комнаты</span>
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-accent/20 text-accent border border-accent/30">
+                    {members.length}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setShowMobileMembersSheet(false)}
+                  className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/[0.08] transition cursor-pointer"
+                  title="Закрыть"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Sheet Body */}
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <Members />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
