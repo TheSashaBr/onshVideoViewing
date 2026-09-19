@@ -10,21 +10,37 @@ import VoiceChat from '../components/VoiceChat';
 import {
   Share2,
   Minimize2,
+  Maximize2,
   RotateCw,
   MessageSquare,
   Users,
   Check,
+  LogOut,
+  WifiOff,
+  RefreshCw,
+  Tv,
+  ArrowRight,
 } from 'lucide-react';
 import { showToast } from '../components/ToastContainer';
+
+const AVATARS = ['🍿', '😎', '🎬', '🤖', '🦊', '🐱', '🐼', '🚀', '🌟', '🎧', '🎮', '🔥'];
 
 export default function Room() {
   const { roomId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
 
-  const [nickname, setNickname] = useState('');
+  const [selectedAvatar, setSelectedAvatar] = useState(() => {
+    return localStorage.getItem('onsh_avatar') || '🍿';
+  });
+  const [nickname, setNickname] = useState(() => {
+    return localStorage.getItem('onsh_nickname') || '';
+  });
   const [hasJoined, setHasJoined] = useState(false);
   const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'members'
+  const [hasUnreadChat, setHasUnreadChat] = useState(false);
+  const [reconnectSeconds, setReconnectSeconds] = useState(0);
+
   const [isLandscape, setIsLandscape] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isManualCinemaMode, setIsManualCinemaMode] = useState(false);
@@ -40,6 +56,7 @@ export default function Room() {
   const connectionStatus = useRoomStore(state => state.connectionStatus);
   const isJoining = useRoomStore(state => state.isJoining);
   const hasJoinedRoom = useRoomStore(state => state.hasJoinedRoom);
+  const roomState = useRoomStore(state => state.roomState);
   const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
 
   // Persist host token across page refreshes
@@ -100,17 +117,58 @@ export default function Room() {
     };
   }, []);
 
-  // Toast notifications are handled directly by roomStore upon incoming MEMBER_JOINED and MEMBER_LEFT messages
+  // Track unread chat messages when on another tab
+  const prevMsgCountRef = useRef(chatMessages.length);
+  useEffect(() => {
+    if (chatMessages.length > prevMsgCountRef.current) {
+      if (activeTab !== 'chat') {
+        setHasUnreadChat(true);
+      }
+    }
+    prevMsgCountRef.current = chatMessages.length;
+  }, [chatMessages.length, activeTab]);
+
+  const handleSelectTab = (tab) => {
+    setActiveTab(tab);
+    if (tab === 'chat') {
+      setHasUnreadChat(false);
+    }
+  };
+
+  // Watch connection status changes for feedback
+  const prevConnectionStatusRef = useRef(connectionStatus);
+  useEffect(() => {
+    let timer;
+    if (connectionStatus === 'reconnecting') {
+      timer = setInterval(() => {
+        setReconnectSeconds(s => s + 1);
+      }, 1000);
+    } else {
+      setReconnectSeconds(0);
+    }
+
+    if (prevConnectionStatusRef.current === 'reconnecting' && connectionStatus === 'connected') {
+      showToast('Соединение с сервером восстановлено', 'success', 3000);
+    }
+    prevConnectionStatusRef.current = connectionStatus;
+
+    return () => clearInterval(timer);
+  }, [connectionStatus]);
 
   const handleJoin = (e) => {
     e.preventDefault();
-    if (!nickname.trim()) return;
+    const cleanNick = nickname.trim();
+    if (!cleanNick) return;
+    localStorage.setItem('onsh_avatar', selectedAvatar);
+    localStorage.setItem('onsh_nickname', cleanNick);
+    const hasEmojiPrefix = /^\p{Extended_Pictographic}/u.test(cleanNick);
+    const fullNickname = hasEmojiPrefix ? cleanNick : `${selectedAvatar} ${cleanNick}`;
     const userId = hostToken || uuidv4();
-    joinRoom(roomId, userId, nickname.trim(), isHost);
+    joinRoom(roomId, userId, fullNickname, isHost);
     setHasJoined(true);
   };
 
-  // Toggle rotate / fullscreen (with 100% Safari & iOS fallback)
+  // Toggle rotate / fullscreen
   const toggleRotateAndFullscreen = async () => {
     const target = containerRef.current || document.documentElement;
     const isCurrentlyActive = isFullscreen || isManualCinemaMode;
@@ -161,51 +219,96 @@ export default function Room() {
         await navigator.share(shareData);
         return;
       } catch (e) {
-        // User cancelled or share failed, fallback to copy
+        // Fallback to copy
       }
     }
 
     try {
       await navigator.clipboard.writeText(window.location.href);
       setCopied(true);
+      showToast('Ссылка на комнату скопирована в буфер', 'info', 2500);
       setTimeout(() => setCopied(false), 2000);
     } catch (e) {
       console.warn('Clipboard write error:', e);
     }
   };
 
+  // Nickname entry modal before joining
   if (!hasJoined) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 bg-[#0a0a0f] relative overflow-hidden">
+      <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 bg-surface text-white relative overflow-hidden">
+        {/* Ambient background glow */}
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-blue-600/10 rounded-full blur-[120px]" />
+          <div
+            className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-blue-600/10 rounded-full blur-[140px] animate-pulse"
+            style={{ animationDuration: '8s' }}
+          />
+          <div
+            className="absolute bottom-1/4 right-1/3 w-80 h-80 bg-purple-600/10 rounded-full blur-[130px] animate-pulse"
+            style={{ animationDuration: '10s' }}
+          />
         </div>
-        <div className="relative z-10 bg-white/[0.03] border border-white/[0.08] p-7 sm:p-9 rounded-2xl shadow-2xl w-full max-w-sm backdrop-blur-sm">
-          <div className="text-center mb-7">
-            <img src="/onsh-logo.png" alt="onsh" className="h-8 mx-auto mb-4 opacity-60" />
+
+        <div className="relative z-10 bg-surface-raised/95 border border-border-subtle p-6 sm:p-8 rounded-3xl shadow-glass-lg w-full max-w-sm backdrop-blur-xl animate-scale-in">
+          <div className="text-center mb-6">
+            <img src="/onsh-logo.png" alt="onsh" className="h-8 mx-auto mb-3 opacity-90 select-none" />
             <h2 className="text-xl font-bold text-white mb-1">Войти в комнату</h2>
-            <p className="text-gray-500 text-sm">
-              Введите никнейм для просмотра
-            </p>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/[0.04] border border-border-subtle text-xs text-gray-400 font-mono">
+              <span>комната:</span>
+              <span className="text-gray-200 font-semibold">#{roomId?.slice(0, 10)}</span>
+            </div>
           </div>
 
-          <form onSubmit={handleJoin} className="space-y-4">
+          <form onSubmit={handleJoin} className="space-y-5">
+            {/* Avatar Selector */}
             <div>
-              <input
-                type="text"
-                value={nickname}
-                onChange={e => setNickname(e.target.value)}
-                placeholder="Ваш никнейм"
-                className="w-full bg-white/[0.05] border border-white/[0.1] rounded-xl px-4 py-3 text-base text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition"
-                required
-                autoFocus
-              />
+              <label className="block text-xs font-semibold text-gray-400 mb-2 text-center">
+                Выберите аватар
+              </label>
+              <div className="grid grid-cols-6 gap-2 p-2 bg-surface/80 rounded-2xl border border-border-subtle">
+                {AVATARS.map((av) => (
+                  <button
+                    key={av}
+                    type="button"
+                    onClick={() => setSelectedAvatar(av)}
+                    className={`w-9 h-9 text-lg rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                      selectedAvatar === av
+                        ? 'bg-accent/25 border-2 border-accent scale-110 shadow-glow-accent'
+                        : 'hover:bg-white/[0.08] hover:scale-105'
+                    }`}
+                  >
+                    {av}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Nickname Input */}
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                Ваше имя или никнейм
+              </label>
+              <div className="relative flex items-center">
+                <span className="absolute left-3.5 text-lg select-none">
+                  {selectedAvatar}
+                </span>
+                <input
+                  type="text"
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  placeholder="Как вас называть?"
+                  maxLength={24}
+                  className="w-full bg-white/[0.04] border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition"
+                  required
+                  autoFocus
+                />
+              </div>
             </div>
 
             <button
               type="submit"
-              disabled={isJoining}
-              className="w-full bg-white text-black active:scale-[0.97] py-3 rounded-xl font-bold shadow-lg transition duration-150 text-base disabled:opacity-60 cursor-pointer"
+              disabled={isJoining || !nickname.trim()}
+              className="w-full group flex items-center justify-center gap-2 bg-gradient-to-r from-white via-gray-100 to-white text-black active:scale-[0.98] py-3.5 rounded-xl font-bold shadow-lg transition duration-150 text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isJoining ? (
                 <span className="flex items-center justify-center gap-2">
@@ -213,7 +316,10 @@ export default function Room() {
                   Подключение...
                 </span>
               ) : (
-                'Присоединиться'
+                <>
+                  <span>Присоединиться к просмотру</span>
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                </>
               )}
             </button>
           </form>
@@ -222,81 +328,118 @@ export default function Room() {
     );
   }
 
-  // Mobile cinema mode if in landscape on a mobile device, in fullscreen, or manual toggle
+  // Cinema mode if in landscape on mobile, in fullscreen, or manually toggled
   const isCinemaMode = isFullscreen || isManualCinemaMode || (isLandscape && window.innerHeight < 600);
 
   return (
     <div
       ref={containerRef}
-      className="flex flex-col md:flex-row h-[100dvh] w-full bg-[#0a0a0f] text-white overflow-hidden select-none relative"
+      className="flex flex-col md:flex-row h-[100dvh] w-full bg-surface text-white overflow-hidden select-none relative"
     >
-
       {/* Loading overlay right after joining until room data arrives */}
       {isJoining && !hasJoinedRoom && (
-        <div className="absolute inset-0 z-50 bg-[#0a0a0f]/90 backdrop-blur-md flex flex-col items-center justify-center p-4">
-          <div className="flex flex-col items-center gap-4 text-center">
-            <div className="w-12 h-12 border-3 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+        <div className="absolute inset-0 z-50 bg-surface/90 backdrop-blur-md flex flex-col items-center justify-center p-4">
+          <div className="flex flex-col items-center gap-4 text-center animate-fade-in">
+            <div className="w-12 h-12 border-3 border-accent/20 border-t-accent rounded-full animate-spin" />
             <div className="space-y-1">
-              <p className="text-base font-medium text-white">Входим в комнату...</p>
-              <p className="text-xs text-gray-500">Подключение к серверу и загрузка состояния</p>
+              <p className="text-base font-semibold text-white">Входим в комнату...</p>
+              <p className="text-xs text-gray-400">Подключение к серверу и синхронизация</p>
             </div>
           </div>
         </div>
       )}
 
+      {/* Floating connection status toasts */}
       {connectionStatus === 'reconnecting' && (
-        <div className="absolute top-0 left-0 right-0 z-50 bg-yellow-600 text-white text-center text-xs py-1 animate-pulse">
-          Переподключение к серверу...
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-yellow-500/90 text-black text-xs font-semibold rounded-full shadow-lg backdrop-blur-md animate-bounce">
+          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          <span>Переподключение к серверу... ({reconnectSeconds}с)</span>
         </div>
       )}
+
       {connectionStatus === 'disconnected' && hasJoined && !isJoining && (
-        <div className="absolute top-0 left-0 right-0 z-50 bg-red-600 text-white text-center text-xs py-1">
-          Соединение потеряно. Проверьте интернет.
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-red-600/95 text-white text-xs font-semibold rounded-full shadow-xl backdrop-blur-md animate-slide-up">
+          <WifiOff className="w-3.5 h-3.5 shrink-0" />
+          <span>Соединение потеряно</span>
+          <button
+            onClick={() => {
+              const fullNickname = `${selectedAvatar} ${nickname.trim()}`;
+              const userId = hostToken || uuidv4();
+              joinRoom(roomId, userId, fullNickname, isHost);
+            }}
+            className="ml-2 px-2.5 py-0.5 bg-white text-red-600 rounded-lg text-[11px] font-bold hover:bg-gray-100 transition active:scale-95 cursor-pointer"
+          >
+            Переподключить
+          </button>
         </div>
       )}
+
       {/* Main Video Section */}
       <div
         className={`flex flex-col min-w-0 transition-all duration-300 ${
-          isCinemaMode
-            ? 'w-full h-full'
-            : 'w-full md:flex-1 h-auto md:h-full'
+          isCinemaMode ? 'w-full h-full' : 'w-full md:flex-1 h-auto md:h-full'
         }`}
       >
-        {/* Header: visible on desktop, or in mobile portrait */}
+        {/* Header: visible on desktop, or in mobile portrait when not in cinema mode */}
         {!isCinemaMode && (
-          <header className="bg-[#0a0a0f]/95 backdrop-blur-xl border-b border-white/[0.06] px-3 sm:px-5 py-2 flex justify-between items-center shrink-0 z-20 pt-safe">
-            <button
-              onClick={() => {
-                leaveRoom();
-                navigate('/');
-              }}
-              className="flex items-center gap-2 group text-left cursor-pointer focus:outline-none"
-              title="Вернуться на главную"
-            >
-              <img
-                src="/onsh-logo.png"
-                alt="onsh"
-                className="h-6 sm:h-7 w-auto object-contain group-hover:opacity-80 transition-opacity"
-              />
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            </button>
+          <header className="bg-surface/95 backdrop-blur-xl border-b border-border-subtle px-3 sm:px-5 py-2.5 flex justify-between items-center shrink-0 z-20 pt-safe">
+            {/* Left: Brand logo & Room Code */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  leaveRoom();
+                  navigate('/');
+                }}
+                className="flex items-center gap-2 group text-left cursor-pointer focus:outline-none"
+                title="Вернуться на главную"
+              >
+                <img
+                  src="/onsh-logo.png"
+                  alt="onsh"
+                  className="h-6 sm:h-7 w-auto object-contain group-hover:opacity-80 transition-opacity"
+                />
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Комната активна" />
+              </button>
 
-            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleShare}
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-white/[0.04] hover:bg-white/[0.08] border border-border-subtle rounded-lg text-xs font-mono text-gray-400 hover:text-gray-200 transition cursor-pointer"
+                title="Нажмите, чтобы скопировать ссылку на комнату"
+              >
+                <span className="text-gray-500">#</span>
+                <span className="truncate max-w-[90px]">{roomId}</span>
+              </button>
+            </div>
+
+            {/* Center: Video state pill (if video loaded) */}
+            {roomState?.videoUrl ? (
+              <div className="hidden lg:flex items-center gap-2 px-3 py-1 bg-surface-raised/70 border border-border-subtle rounded-full text-xs text-gray-300 max-w-[280px] shadow-sm">
+                <Tv className="w-3.5 h-3.5 text-accent shrink-0" />
+                <span className="capitalize font-semibold text-white/90 shrink-0">
+                  {roomState.videoType}
+                </span>
+                <span className="text-gray-600">·</span>
+                <span className="truncate text-gray-400">{roomState.videoUrl}</span>
+              </div>
+            ) : null}
+
+            {/* Right: Controls & Actions */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <VoiceChat />
 
               <button
                 onClick={handleShare}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-white/[0.06] active:scale-95 text-xs font-medium rounded-lg text-gray-300 transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.05] hover:bg-white/[0.09] active:scale-95 text-xs font-medium rounded-xl text-gray-200 border border-border-subtle transition cursor-pointer"
                 title="Поделиться ссылкой"
               >
                 {copied ? (
                   <>
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-emerald-400">Скопировано</span>
+                    <span className="text-emerald-400 font-medium">Скопировано</span>
                   </>
                 ) : (
                   <>
-                    <Share2 className="w-3.5 h-3.5" />
+                    <Share2 className="w-3.5 h-3.5 text-gray-400" />
                     <span className="hidden sm:inline">Пригласить</span>
                   </>
                 )}
@@ -304,10 +447,23 @@ export default function Room() {
 
               <button
                 onClick={toggleRotateAndFullscreen}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/[0.08] hover:bg-white/[0.12] active:scale-95 text-xs font-medium rounded-lg text-white transition"
-                title="Полноэкранный просмотр"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.05] hover:bg-white/[0.09] active:scale-95 text-xs font-medium rounded-xl text-gray-200 border border-border-subtle transition cursor-pointer"
+                title="Полноэкранный просмотр (Кино)"
               >
-                <RotateCw className="w-3.5 h-3.5" />
+                <Maximize2 className="w-3.5 h-3.5 text-gray-300" />
+                <span className="hidden md:inline">Кино</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  leaveRoom();
+                  navigate('/');
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-red-500/10 active:scale-95 text-xs font-medium rounded-xl text-red-400 hover:text-red-300 border border-transparent hover:border-red-500/20 transition cursor-pointer"
+                title="Выйти из комнаты"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Выйти</span>
               </button>
             </div>
           </header>
@@ -328,7 +484,7 @@ export default function Room() {
             <>
               {/* Top controls in cinema mode */}
               <div className="absolute top-3 sm:top-4 left-3 right-3 flex items-center justify-between z-40 pointer-events-none pt-safe">
-                <div className="pointer-events-auto bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs font-medium text-gray-300 flex items-center gap-2 shadow-lg">
+                <div className="pointer-events-auto bg-surface-raised/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-border-subtle text-xs font-medium text-gray-300 flex items-center gap-2 shadow-lg">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   <span>{members.length} онлайн</span>
                 </div>
@@ -339,11 +495,11 @@ export default function Room() {
 
                   {/* Toggle floating chat */}
                   <button
-                    onClick={() => setShowFloatingChat(prev => !prev)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-semibold transition active:scale-95 ${
+                    onClick={() => setShowFloatingChat((prev) => !prev)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-xs font-semibold transition active:scale-95 cursor-pointer ${
                       showFloatingChat
-                        ? 'bg-blue-600 text-white border-blue-400 shadow-lg'
-                        : 'bg-black/70 text-gray-200 border-white/10 hover:bg-black/90'
+                        ? 'bg-accent text-white border-accent-hover shadow-lg'
+                        : 'bg-surface-raised/90 text-gray-200 border-border-subtle hover:bg-surface-hover'
                     }`}
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
@@ -353,7 +509,7 @@ export default function Room() {
                   {/* Exit fullscreen/rotation */}
                   <button
                     onClick={toggleRotateAndFullscreen}
-                    className="p-2 bg-black/70 hover:bg-black/90 backdrop-blur-md text-white border border-white/10 rounded-full transition active:scale-95"
+                    className="p-2 bg-surface-raised/90 hover:bg-surface-hover backdrop-blur-md text-white border border-border-subtle rounded-full transition active:scale-95 cursor-pointer"
                     title="Выйти из полноэкранного режима"
                   >
                     {isFullscreen ? (
@@ -368,10 +524,7 @@ export default function Room() {
               {/* Floating Chat in Cinema Mode */}
               {showFloatingChat && (
                 <div className="absolute right-3 top-16 bottom-4 w-80 max-w-[85vw] z-40 animate-in fade-in slide-in-from-right duration-200">
-                  <Chat
-                    isOverlay
-                    onCloseOverlay={() => setShowFloatingChat(false)}
-                  />
+                  <Chat isOverlay onCloseOverlay={() => setShowFloatingChat(false)} />
                 </div>
               )}
             </>
@@ -380,38 +533,39 @@ export default function Room() {
 
         {/* Mobile Tabs & Content (Only visible on small screens when NOT in cinema mode) */}
         {!isCinemaMode && (
-          <div className="flex flex-col flex-1 min-h-0 md:hidden bg-[#0a0a0f]">
+          <div className="flex flex-col flex-1 min-h-0 md:hidden bg-surface">
             {/* Mobile Tab Selector */}
-            <div className="flex border-b border-white/[0.06] bg-[#0a0a0f]/90 shrink-0">
+            <div className="flex border-b border-border-subtle bg-surface/90 shrink-0 p-1.5 gap-1">
               <button
-                onClick={() => setActiveTab('chat')}
-                className={`flex-1 py-2.5 text-xs font-semibold flex items-center justify-center gap-2 border-b-2 transition-colors ${
+                onClick={() => handleSelectTab('chat')}
+                className={`flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
                   activeTab === 'chat'
-                    ? 'border-blue-500 text-blue-400 bg-blue-500/5'
-                    : 'border-transparent text-gray-400 hover:text-gray-200'
+                    ? 'bg-accent/15 text-white border border-accent/40'
+                    : 'text-gray-400 hover:text-gray-200 border border-transparent'
                 }`}
               >
-                <MessageSquare className="w-4 h-4" />
+                <MessageSquare className="w-4 h-4 text-accent" />
                 <span>Чат</span>
-                {chatMessages.length > 0 && (
-                  <span className="bg-gray-800 text-gray-300 text-[10px] px-1.5 py-0.2 rounded-full">
-                    {chatMessages.length}
-                  </span>
+                {hasUnreadChat && activeTab !== 'chat' && (
+                  <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
                 )}
               </button>
 
               <button
-                onClick={() => setActiveTab('members')}
-                className={`flex-1 py-2.5 text-xs font-semibold flex items-center justify-center gap-2 border-b-2 transition-colors ${
+                onClick={() => handleSelectTab('members')}
+                className={`flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
                   activeTab === 'members'
-                    ? 'border-blue-500 text-blue-400 bg-blue-500/5'
-                    : 'border-transparent text-gray-400 hover:text-gray-200'
+                    ? 'bg-accent/15 text-white border border-accent/40'
+                    : 'text-gray-400 hover:text-gray-200 border border-transparent'
                 }`}
               >
-                <Users className="w-4 h-4" />
+                <Users className="w-4 h-4 text-accent" />
                 <span>Участники ({members.length})</span>
                 {roomVoiceUsers.size > 0 && (
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Идёт голосовой звонок" />
+                  <span
+                    className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
+                    title="Идёт голосовой звонок"
+                  />
                 )}
               </button>
             </div>
@@ -426,12 +580,49 @@ export default function Room() {
 
       {/* Desktop Sidebar (Only visible on md: screens and above) */}
       {!isCinemaMode && (
-        <aside className="hidden md:flex w-80 lg:w-96 bg-[#0a0a0f] border-l border-white/[0.06] flex-col shrink-0 h-full">
-          <div className="h-[320px] border-b border-white/[0.06] shrink-0 flex flex-col overflow-hidden">
-            <Members />
+        <aside className="hidden md:flex w-80 lg:w-96 bg-surface-raised border-l border-border-subtle flex-col shrink-0 h-full">
+          {/* Sidebar Tab Selector */}
+          <div className="p-2 border-b border-border-subtle flex items-center gap-1.5 bg-surface/60 shrink-0">
+            <button
+              onClick={() => handleSelectTab('chat')}
+              className={`flex-1 py-2 px-3 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'chat'
+                  ? 'bg-accent/15 text-white border border-accent/40 shadow-sm'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04] border border-transparent'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4 text-accent" />
+              <span>Чат</span>
+              {hasUnreadChat && activeTab !== 'chat' && (
+                <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+              )}
+            </button>
+
+            <button
+              onClick={() => handleSelectTab('members')}
+              className={`flex-1 py-2 px-3 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'members'
+                  ? 'bg-accent/15 text-white border border-accent/40 shadow-sm'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04] border border-transparent'
+              }`}
+            >
+              <Users className="w-4 h-4 text-accent" />
+              <span>Участники</span>
+              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-white/[0.08] text-gray-300">
+                {members.length}
+              </span>
+              {roomVoiceUsers.size > 0 && (
+                <span
+                  className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
+                  title="Идёт голосовой звонок"
+                />
+              )}
+            </button>
           </div>
+
+          {/* Sidebar Tab Content */}
           <div className="flex-1 overflow-hidden flex flex-col">
-            <Chat />
+            {activeTab === 'chat' ? <Chat /> : <Members />}
           </div>
         </aside>
       )}
