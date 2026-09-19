@@ -69,6 +69,14 @@ export const useVoiceStore = create((set, get) => ({
       }
     });
 
+    // Handle host-initiated mute
+    window.addEventListener('onsh_host_muted', () => {
+      const { isInVoice, isMuted, toggleMute } = get();
+      if (isInVoice && !isMuted) {
+        toggleMute();
+      }
+    });
+
     socket.emit('webrtc_get_voice_users');
   },
 

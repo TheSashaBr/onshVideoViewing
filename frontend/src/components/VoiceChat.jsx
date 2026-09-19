@@ -1,6 +1,23 @@
+import React from 'react';
 import { useVoiceStore } from '../store/voiceStore';
 import { useRoomStore } from '../store/roomStore';
-import { Mic, MicOff, PhoneCall, PhoneOff, Loader2, Volume2, Users } from 'lucide-react';
+import { Mic, MicOff, PhoneCall, PhoneOff, Loader2, Volume2, Radio } from 'lucide-react';
+import { cn } from '../utils/cn';
+
+// Animated audio frequency equalizer bars
+export function VoiceEqualizer({ className = '', barClassName = 'bg-emerald-400' }) {
+  return (
+    <div
+      className={cn('inline-flex items-end gap-[2.5px] h-3.5 px-0.5 select-none', className)}
+      aria-label="Идёт речь"
+    >
+      <span className={cn('w-[2.5px] rounded-full animate-equalize-1', barClassName)} />
+      <span className={cn('w-[2.5px] rounded-full animate-equalize-2', barClassName)} />
+      <span className={cn('w-[2.5px] rounded-full animate-equalize-3', barClassName)} />
+      <span className={cn('w-[2.5px] rounded-full animate-equalize-4', barClassName)} />
+    </div>
+  );
+}
 
 export default function VoiceChat({ variant = 'pill', compact = false }) {
   const isInVoice = useVoiceStore(state => state.isInVoice);
@@ -16,28 +33,45 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
   const currentUserId = useRoomStore(state => state.userId);
 
   const voiceCount = roomVoiceUsers.size;
-  const speakingList = members.filter(m => talkingUsers.has(m.userId));
-  const isMeSpeaking = currentUserId && talkingUsers.has(currentUserId);
+  const isMeSpeaking = currentUserId && (talkingUsers.has(currentUserId) || talkingUsers.has(String(currentUserId)));
 
-  // Variant: 'panel' - Full-width dedicated widget inside Members tab / sidebar
+  // Extract avatar character or emoji
+  const getAvatarChar = (nick = '') => {
+    const trimmed = nick.trim();
+    const match = trimmed.match(/^\p{Extended_Pictographic}/u);
+    return match ? match[0] : (trimmed[0] || '?').toUpperCase();
+  };
+
+  // Clean nickname without leading emoji
+  const getCleanNick = (nick = '') => {
+    return nick.replace(/^\p{Extended_Pictographic}\s*/u, '').trim() || nick;
+  };
+
+  // ==========================================
+  // VARIANT: PANEL (Inside Members sidebar)
+  // ==========================================
   if (variant === 'panel') {
     if (!isInVoice) {
       return (
-        <div className="bg-gradient-to-r from-emerald-950/40 via-gray-900/60 to-emerald-950/20 border border-emerald-500/30 rounded-xl p-3 shadow-md">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                <PhoneCall className="w-3.5 h-3.5" />
+        <section
+          aria-label="Голосовой чат комнаты"
+          className="bg-gradient-to-b from-emerald-950/30 to-surface-raised/80 border border-emerald-500/25 rounded-2xl p-3.5 shadow-glass"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-sm">
+                <Radio className="w-4 h-4 text-emerald-400 animate-pulse-subtle" />
               </div>
               <div>
-                <span className="text-xs font-semibold text-white block">Голосовой чат</span>
-                <span className="text-[11px] text-gray-400 block">
-                  {voiceCount > 0 ? `${voiceCount} в звонке` : 'Комната свободна'}
-                </span>
+                <h3 className="text-xs font-semibold text-white tracking-wide">Голосовой чат</h3>
+                <p className="text-[11px] text-gray-400">
+                  {voiceCount > 0 ? `${voiceCount} в звонке прямо сейчас` : 'В звонке пока никого нет'}
+                </p>
               </div>
             </div>
+
             {voiceCount > 0 && (
-              <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <span className="flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 {voiceCount}
               </span>
@@ -47,12 +81,13 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
           <button
             onClick={joinVoice}
             disabled={isConnecting}
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white font-medium text-xs rounded-lg transition-all shadow-md shadow-emerald-900/30 cursor-pointer disabled:opacity-60"
+            aria-label="Войти в голосовой чат"
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-[0.98] text-white font-semibold text-xs rounded-xl transition-all shadow-md shadow-emerald-950/40 cursor-pointer disabled:opacity-60"
           >
             {isConnecting ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Подключение к звонку...</span>
+                <span>Подключение к аудиоканалу...</span>
               </>
             ) : (
               <>
@@ -61,91 +96,125 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
               </>
             )}
           </button>
-        </div>
+        </section>
       );
     }
 
     // In Voice - Panel mode
+    const voiceMembers = members.filter(
+      m => roomVoiceUsers.has(String(m.userId)) || roomVoiceUsers.has(m.userId)
+    );
+
     return (
-      <div className="bg-gradient-to-r from-emerald-950/60 via-gray-900/80 to-emerald-950/40 border border-emerald-500/40 rounded-xl p-3 shadow-lg">
-        <div className="flex items-center justify-between mb-2.5">
+      <section
+        aria-label="Активный голосовой чат"
+        className="bg-gradient-to-b from-emerald-950/50 via-surface-raised/90 to-surface-raised/70 border border-emerald-500/35 rounded-2xl p-3.5 shadow-glass-lg"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
             </span>
-            <span className="text-xs font-semibold text-emerald-400">
-              Вы в звонке ({voiceCount})
+            <span className="text-xs font-bold text-emerald-400 tracking-wide">
+              В эфире ({voiceCount})
             </span>
           </div>
 
-          {speakingList.length > 0 && (
-            <span className="flex items-center gap-1 text-[10px] text-emerald-300 font-medium">
-              <Volume2 className="w-3 h-3 text-emerald-400 animate-pulse" />
-              <span className="truncate max-w-[120px]">
-                {speakingList.map(s => s.userId === currentUserId ? 'Вы' : s.nickname).join(', ')}
-              </span>
-            </span>
+          {isMeSpeaking && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-[10px] text-emerald-300 font-semibold animate-pulse">
+              <VoiceEqualizer barClassName="bg-emerald-300" />
+              <span>Вы говорите</span>
+            </div>
           )}
         </div>
 
-        {/* List of active participants in this voice call */}
-        <div className="flex flex-wrap gap-1.5 mb-2.5">
-          {members
-            .filter(m => roomVoiceUsers.has(String(m.userId)) || roomVoiceUsers.has(m.userId))
-            .map(m => {
-              const isMe = m.userId === currentUserId;
-              const isTalking = talkingUsers.has(m.userId);
-              return (
-                <div
-                  key={m.userId}
-                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs transition-all ${
-                    isTalking
-                      ? 'bg-emerald-500/30 text-emerald-200 ring-1 ring-emerald-400/50 shadow-sm'
-                      : 'bg-white/[0.06] text-gray-300'
-                  }`}
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full ${
+        {/* Voice Participants List */}
+        <div className="space-y-1.5 mb-3 max-h-36 overflow-y-auto pr-1">
+          {voiceMembers.map(m => {
+            const isMe = m.userId === currentUserId;
+            const isTalking = talkingUsers.has(m.userId) || talkingUsers.has(String(m.userId));
+            const avatarChar = getAvatarChar(m.nickname);
+            const cleanNick = getCleanNick(m.nickname);
+
+            return (
+              <div
+                key={m.userId}
+                className={cn(
+                  'flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-all border',
+                  isTalking
+                    ? 'bg-emerald-500/20 border-emerald-400/50 shadow-glow-voice ring-1 ring-emerald-400/30'
+                    : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.06]'
+                )}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div
+                    className={cn(
+                      'w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 transition-colors',
                       isTalking
-                        ? 'bg-emerald-400 animate-pulse'
-                        : isMe && isMuted
-                        ? 'bg-red-500'
-                        : 'bg-emerald-500'
-                    }`}
-                  />
-                  <span className="font-medium truncate max-w-[100px]">
-                    {isMe ? 'Вы' : m.nickname}
+                        ? 'bg-emerald-500 text-black shadow-sm'
+                        : 'bg-white/[0.08] text-gray-200'
+                    )}
+                  >
+                    {avatarChar}
+                  </div>
+                  <span className="truncate font-medium text-gray-200 text-xs">
+                    {cleanNick} {isMe && <span className="text-accent text-[10px] font-semibold">(вы)</span>}
                   </span>
-                  {isTalking && (
-                    <Volume2 className="w-3 h-3 text-emerald-400 animate-pulse" />
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isTalking ? (
+                    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-semibold">
+                      <VoiceEqualizer barClassName="bg-emerald-400" />
+                      <span className="hidden sm:inline">говорит</span>
+                    </div>
+                  ) : isMe && isMuted ? (
+                    <span className="p-1 rounded-md bg-red-500/20 text-red-400" title="Микрофон выключен">
+                      <MicOff className="w-3 h-3" />
+                    </span>
+                  ) : (
+                    <span className="p-1 rounded-md text-gray-400" title="В звонке">
+                      <Mic className="w-3 h-3" />
+                    </span>
                   )}
                 </div>
-              );
-            })}
+              </div>
+            );
+          })}
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Mute button */}
+        {/* Action Controls */}
+        <div className="flex items-center gap-2 pt-1 border-t border-white/[0.06]">
+          {/* Mute toggle button */}
           <button
             onClick={toggleMute}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-medium transition active:scale-[0.98] cursor-pointer ${
+            aria-pressed={isMuted}
+            aria-label={isMuted ? 'Включить микрофон' : 'Выключить микрофон'}
+            className={cn(
+              'flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition active:scale-[0.98] cursor-pointer border',
               isMuted
-                ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
+                ? 'bg-red-500/20 text-red-300 border-red-500/40 hover:bg-red-500/30'
                 : isMeSpeaking
-                ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-400/60 ring-2 ring-emerald-400/30'
-                : 'bg-white/[0.08] text-gray-200 border border-white/[0.1] hover:bg-white/[0.15]'
-            }`}
+                ? 'bg-emerald-500/30 text-emerald-200 border-emerald-400/60 shadow-glow-voice'
+                : 'bg-white/[0.06] text-gray-200 border-white/[0.1] hover:bg-white/[0.12]'
+            )}
           >
             {isMuted ? (
               <>
                 <MicOff className="w-3.5 h-3.5 text-red-400" />
                 <span>Микрофон выкл</span>
               </>
+            ) : isMeSpeaking ? (
+              <>
+                <VoiceEqualizer barClassName="bg-emerald-300" />
+                <span>Вы говорите</span>
+              </>
             ) : (
               <>
                 <Mic className="w-3.5 h-3.5 text-emerald-400" />
-                <span>{isMeSpeaking ? 'Вы говорите' : 'Микрофон вкл'}</span>
+                <span>Микрофон вкл</span>
               </>
             )}
           </button>
@@ -153,41 +222,45 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
           {/* Leave call button */}
           <button
             onClick={leaveVoice}
-            className="flex items-center gap-1 py-1.5 px-3 bg-red-600/80 hover:bg-red-600 active:scale-[0.98] text-white font-medium text-xs rounded-lg transition cursor-pointer shadow-sm"
-            title="Выйти из звонка"
+            aria-label="Отключиться от голосового чата"
+            className="flex items-center gap-1.5 py-2 px-3.5 bg-red-600/80 hover:bg-red-600 active:scale-[0.98] text-white font-semibold text-xs rounded-xl transition cursor-pointer shadow-sm shadow-red-950/40"
+            title="Отключиться от звонка"
           >
             <PhoneOff className="w-3.5 h-3.5" />
             <span>Выйти</span>
           </button>
         </div>
-      </div>
+      </section>
     );
   }
 
-  // Variant: 'pill' - Header & Cinema Mode Top Bar
+  // ==========================================
+  // VARIANT: PILL (Header & Cinema Mode Top Bar)
+  // ==========================================
   if (!isInVoice) {
     return (
       <button
         onClick={joinVoice}
         disabled={isConnecting}
-        className={`flex items-center gap-1.5 transition-all duration-200 active:scale-95 cursor-pointer font-medium text-xs rounded-xl shadow-sm ${
-          compact
-            ? 'px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/40'
-            : 'px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/40'
-        } ${isConnecting ? 'opacity-70 cursor-wait' : ''}`}
+        aria-label="Войти в голосовой чат"
+        className={cn(
+          'flex items-center gap-1.5 transition-all duration-200 active:scale-95 cursor-pointer font-semibold text-xs rounded-xl shadow-sm border border-emerald-500/30',
+          'px-2.5 sm:px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white shadow-emerald-950/40',
+          isConnecting && 'opacity-70 cursor-wait'
+        )}
         title="Войти в голосовой чат"
       >
         {isConnecting ? (
           <>
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>Подключение...</span>
+            <span className="hidden sm:inline">Подключение...</span>
           </>
         ) : (
           <>
-            <PhoneCall className="w-3.5 h-3.5" />
+            <PhoneCall className="w-3.5 h-3.5 text-white" />
             <span>{compact ? 'Голос' : 'Голосовой чат'}</span>
             {voiceCount > 0 && (
-              <span className="ml-0.5 px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-emerald-900/60 text-white">
+              <span className="ml-0.5 px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-emerald-900/80 text-emerald-200 border border-emerald-400/30">
                 {voiceCount}
               </span>
             )}
@@ -199,28 +272,34 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
 
   // Active Voice Call Pill Controls
   return (
-    <div className="flex items-center gap-1 sm:gap-1.5 bg-gray-900/90 backdrop-blur-md border border-emerald-500/40 px-1.5 sm:px-2 py-1 rounded-xl shadow-lg transition-all">
+    <div
+      role="region"
+      aria-label="Контролы голосового чата"
+      className="flex items-center gap-1 sm:gap-1.5 bg-surface-raised/95 backdrop-blur-xl border border-emerald-500/40 px-1.5 sm:px-2 py-1 rounded-xl shadow-glass transition-all"
+    >
       {/* Speaking / Audio Status Indicator */}
       <div
-        className={`flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-xs transition-colors ${
+        className={cn(
+          'flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs transition-colors',
           isMeSpeaking
-            ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/50'
+            ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/50 shadow-sm'
             : 'text-gray-300'
-        }`}
+        )}
         title={isMuted ? 'Микрофон выключен' : isMeSpeaking ? 'Вы говорите' : 'Микрофон включен'}
       >
-        <span
-          className={`w-2 h-2 rounded-full transition-all ${
-            isMeSpeaking
-              ? 'bg-emerald-400 animate-ping'
-              : isMuted
-              ? 'bg-red-500'
-              : 'bg-emerald-500'
-          }`}
-        />
+        {isMeSpeaking ? (
+          <VoiceEqualizer barClassName="bg-emerald-400" />
+        ) : (
+          <span
+            className={cn(
+              'w-2 h-2 rounded-full transition-all',
+              isMuted ? 'bg-red-500' : 'bg-emerald-500'
+            )}
+          />
+        )}
         {!compact && (
-          <span className="text-[11px] font-medium hidden sm:inline text-emerald-400">
-            В эфире ({voiceCount})
+          <span className="text-[11px] font-semibold hidden sm:inline text-emerald-400">
+            {isMeSpeaking ? 'В эфире' : `В эфире (${voiceCount})`}
           </span>
         )}
       </div>
@@ -228,13 +307,16 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
       {/* Mute/Unmute Mic Toggle */}
       <button
         onClick={toggleMute}
-        className={`p-1.5 rounded-lg transition active:scale-95 cursor-pointer ${
+        aria-pressed={isMuted}
+        aria-label={isMuted ? 'Включить микрофон' : 'Выключить микрофон'}
+        className={cn(
+          'p-1.5 rounded-lg transition active:scale-95 cursor-pointer border',
           isMuted
-            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/40'
+            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border-red-500/40'
             : isMeSpeaking
-            ? 'bg-emerald-500/30 text-emerald-300 ring-2 ring-emerald-400/40'
-            : 'bg-white/[0.08] text-gray-200 hover:bg-white/[0.15]'
-        }`}
+            ? 'bg-emerald-500/30 text-emerald-300 border-emerald-400/60 shadow-glow-voice'
+            : 'bg-white/[0.08] text-gray-200 hover:bg-white/[0.15] border-white/[0.08]'
+        )}
         title={isMuted ? 'Включить микрофон' : 'Выключить микрофон'}
       >
         {isMuted ? (
@@ -247,21 +329,12 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
       {/* Leave Voice Button */}
       <button
         onClick={leaveVoice}
-        className="p-1.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white transition active:scale-95 cursor-pointer shadow-sm"
+        aria-label="Отключиться от голосового чата"
+        className="p-1.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white transition active:scale-95 cursor-pointer shadow-sm border border-red-500/30"
         title="Отключиться от голосового чата"
       >
         <PhoneOff className="w-3.5 h-3.5" />
       </button>
-
-      {/* Subtle indicator of someone speaking */}
-      {speakingList.length > 0 && !compact && (
-        <div className="hidden lg:flex items-center gap-1.5 text-[11px] text-emerald-300 pl-1 border-l border-white/10">
-          <Volume2 className="w-3 h-3 text-emerald-400 animate-pulse" />
-          <span className="truncate max-w-[100px]">
-            {speakingList.map(s => s.userId === currentUserId ? 'Вы' : s.nickname).join(', ')}
-          </span>
-        </div>
-      )}
     </div>
   );
 }

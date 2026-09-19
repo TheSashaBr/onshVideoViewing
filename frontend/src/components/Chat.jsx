@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRoomStore } from '../store/roomStore';
 import { Send, Smile, ChevronDown, MessageSquare, X } from 'lucide-react';
-import VoiceChat from './VoiceChat';
 
 const QUICK_EMOJIS = ['🍿', '🔥', '😂', '❤️', '👍', '😮', '👏', '🎬'];
 
@@ -188,7 +187,6 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
               <MessageSquare className="w-3.5 h-3.5 text-accent" />
               <span>Чат</span>
             </span>
-            <VoiceChat compact />
           </div>
           {onCloseOverlay && (
             <button

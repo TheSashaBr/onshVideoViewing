@@ -37,7 +37,9 @@ export default function Room() {
   const [nickname, setNickname] = useState(() => {
     return localStorage.getItem('onsh_nickname') || '';
   });
-  const [hasJoined, setHasJoined] = useState(false);
+  const [hasJoined, setHasJoined] = useState(() => {
+    return sessionStorage.getItem(`onsh_joined_${roomId}`) === 'true';
+  });
   const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'members'
   const [hasUnreadChat, setHasUnreadChat] = useState(false);
   const [reconnectSeconds, setReconnectSeconds] = useState(0);
@@ -205,17 +207,53 @@ export default function Room() {
     return () => clearInterval(timer);
   }, [connectionStatus]);
 
+  const getOrCreateGuestId = (rId) => {
+    const key = `onsh_guest_uid_${rId}`;
+    let id = sessionStorage.getItem(key);
+    if (!id) {
+      id = uuidv4();
+      sessionStorage.setItem(key, id);
+    }
+    return id;
+  };
+
+  // Auto-rejoin room on page reload if previously joined in this tab session
+  useEffect(() => {
+    if (hasJoined && !hasJoinedRoom && !isJoining) {
+      const savedNick = localStorage.getItem('onsh_nickname') || '';
+      if (savedNick.trim()) {
+        const savedAvatar = localStorage.getItem('onsh_avatar') || '🍿';
+        const hasEmojiPrefix = /^\p{Extended_Pictographic}/u.test(savedNick);
+        const fullNickname = hasEmojiPrefix ? savedNick : `${savedAvatar} ${savedNick}`;
+        const userId = hostToken || getOrCreateGuestId(roomId);
+        joinRoom(roomId, userId, fullNickname, isHost);
+      } else {
+        setHasJoined(false);
+      }
+    }
+  }, [hasJoined, roomId]);
+
   const handleJoin = (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     const cleanNick = nickname.trim();
     if (!cleanNick) return;
     localStorage.setItem('onsh_avatar', selectedAvatar);
     localStorage.setItem('onsh_nickname', cleanNick);
     const hasEmojiPrefix = /^\p{Extended_Pictographic}/u.test(cleanNick);
     const fullNickname = hasEmojiPrefix ? cleanNick : `${selectedAvatar} ${cleanNick}`;
-    const userId = hostToken || uuidv4();
+    const userId = hostToken || getOrCreateGuestId(roomId);
+    sessionStorage.setItem(`onsh_joined_${roomId}`, 'true');
     joinRoom(roomId, userId, fullNickname, isHost);
     setHasJoined(true);
+  };
+
+  const handleLeaveRoom = () => {
+    try {
+      sessionStorage.removeItem(`onsh_joined_${roomId}`);
+      sessionStorage.removeItem(`onsh_guest_uid_${roomId}`);
+    } catch (e) {}
+    leaveRoom();
+    navigate('/');
   };
 
   // Toggle rotate / fullscreen
@@ -436,10 +474,7 @@ export default function Room() {
             {/* Left: Brand logo & Room Code */}
             <div className="flex items-center gap-3">
               <button
-                onClick={() => {
-                  leaveRoom();
-                  navigate('/');
-                }}
+                onClick={handleLeaveRoom}
                 className="flex items-center gap-2 group text-left cursor-pointer focus:outline-none"
                 title="Вернуться на главную"
               >
@@ -518,10 +553,7 @@ export default function Room() {
               </button>
 
               <button
-                onClick={() => {
-                  leaveRoom();
-                  navigate('/');
-                }}
+                onClick={handleLeaveRoom}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-red-500/10 active:scale-95 text-xs font-medium rounded-xl text-red-400 hover:text-red-300 border border-transparent hover:border-red-500/20 transition cursor-pointer"
                 title="Выйти из комнаты"
               >

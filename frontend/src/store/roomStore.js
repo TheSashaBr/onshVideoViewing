@@ -28,7 +28,16 @@ export const useRoomStore = create((set, get) => ({
   joinRoom: (roomId, userId, nickname, isHost) => {
     const socket = io(API_URL);
     
-    set({ socket, roomId, userId, nickname, isHost, isJoining: true, hasJoinedRoom: false });
+    set({
+      socket,
+      roomId,
+      userId,
+      nickname,
+      isHost: !!isHost,
+      members: [{ userId, nickname, isHost: !!isHost, joinedAt: Date.now() }],
+      isJoining: true,
+      hasJoinedRoom: false
+    });
     
     socket.emit('join_room', { roomId, userId, nickname, isHost });
 
@@ -51,6 +60,20 @@ export const useRoomStore = create((set, get) => ({
     socket.on('connect', () => {
       set({ connectionStatus: 'connected' });
     });
+
+    socket.on('kicked', () => {
+      try {
+        sessionStorage.removeItem(`onsh_joined_${roomId}`);
+        sessionStorage.removeItem(`onsh_guest_uid_${roomId}`);
+      } catch (e) {}
+      showToast('Вы были исключены из комнаты хостом', 'error', 6000);
+      window.location.href = '/';
+    });
+
+    socket.on('host_muted', () => {
+      window.dispatchEvent(new CustomEvent('onsh_host_muted'));
+      showToast('Хост выключил ваш микрофон', 'warning', 4000);
+    });
     
     socket.on('message', (msg) => {
       // Once any message arrives from room, we are confirmed in room
@@ -70,17 +93,36 @@ export const useRoomStore = create((set, get) => ({
       
       switch (type) {
         case 'MEMBER_JOINED':
-          set({ members: payload.members });
+        case 'MEMBER_LEFT': {
+          const rawMembers = Array.isArray(payload?.members) ? payload.members : [];
+          const memberMap = new Map();
+          for (const m of rawMembers) {
+            if (m && m.userId) {
+              memberMap.set(String(m.userId), m);
+            }
+          }
+          // Ensure current user is present in members list
+          const { userId: myUid, nickname: myNick, isHost: myIsHost } = get();
+          if (myUid && !memberMap.has(String(myUid))) {
+            memberMap.set(String(myUid), {
+              userId: myUid,
+              nickname: myNick || 'Вы',
+              isHost: !!myIsHost,
+              joinedAt: Date.now()
+            });
+          }
+          const deduplicatedMembers = Array.from(memberMap.values());
+          set({ members: deduplicatedMembers });
+
           if (senderId !== userId && payload?.nickname) {
-            showToast(`${payload.nickname} вошёл в комнату`, 'success');
+            if (type === 'MEMBER_JOINED') {
+              showToast(`${payload.nickname} вошёл в комнату`, 'success');
+            } else {
+              showToast(`${payload.nickname} вышел из комнаты`, 'info');
+            }
           }
           break;
-        case 'MEMBER_LEFT':
-          set({ members: payload.members });
-          if (senderId !== userId && payload?.nickname) {
-            showToast(`${payload.nickname} вышел из комнаты`, 'info');
-          }
-          break;
+        }
         case 'CHAT_MESSAGE':
           set(state => {
             const nextTyping = { ...state.typingUsers };
@@ -251,6 +293,20 @@ export const useRoomStore = create((set, get) => ({
   sendTyping: (isTyping) => {
     const { nickname } = get();
     get().sendMessage('TYPING_STATUS', { nickname, isTyping });
+  },
+
+  kickUser: (targetUserId) => {
+    const { socket, isHost } = get();
+    if (socket && isHost && targetUserId) {
+      socket.emit('kick_user', { targetUserId });
+    }
+  },
+
+  hostMuteUser: (targetUserId) => {
+    const { socket, isHost } = get();
+    if (socket && isHost && targetUserId) {
+      socket.emit('host_mute_user', { targetUserId });
+    }
   },
   
   leaveRoom: () => {

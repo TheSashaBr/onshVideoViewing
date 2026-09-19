@@ -3,6 +3,56 @@ const {
   addChatMessage, getChatMessages, addVoiceUser, removeVoiceUser, getVoiceUsers
 } = require('../redis/repository');
 
+// Helper to get active members verified against connected Socket.IO sockets
+async function getLiveRoomMembers(io, roomId) {
+  const socketRoom = io.sockets.adapter.rooms.get(roomId);
+  const activeSocketIds = socketRoom ? Array.from(socketRoom) : [];
+
+  const activeSocketsByUserId = new Map();
+  for (const sockId of activeSocketIds) {
+    const s = io.sockets.sockets.get(sockId);
+    if (s && s.userId) {
+      activeSocketsByUserId.set(String(s.userId), s);
+    }
+  }
+
+  const redisMembers = await getMembers(roomId);
+  const liveMembers = [];
+  const seenUserIds = new Set();
+
+  // Prune any stale members from Redis that have no active socket in the room
+  for (const m of redisMembers) {
+    const uidStr = String(m.userId);
+    if (!activeSocketsByUserId.has(uidStr)) {
+      console.log(`[CLEANUP] Pruning stale member ${uidStr} (${m.nickname}) from room ${roomId}`);
+      await removeMember(roomId, m.userId).catch(() => {});
+      await removeVoiceUser(roomId, m.userId).catch(() => {});
+    } else {
+      if (!seenUserIds.has(uidStr)) {
+        seenUserIds.add(uidStr);
+        liveMembers.push(m);
+      }
+    }
+  }
+
+  // If there is an active socket whose userId was not in Redis yet, add it
+  for (const [uidStr, sock] of activeSocketsByUserId.entries()) {
+    if (!seenUserIds.has(uidStr)) {
+      const fallbackMember = {
+        userId: sock.userId,
+        nickname: sock.nickname || 'Участник',
+        joinedAt: sock.joinedAt || Date.now(),
+        isHost: !!sock.isHost
+      };
+      await addMember(roomId, sock.userId, fallbackMember).catch(() => {});
+      seenUserIds.add(uidStr);
+      liveMembers.push(fallbackMember);
+    }
+  }
+
+  return liveMembers;
+}
+
 function setupHandlers(io, socket) {
   // Simple per-socket message throttle
   let lastMessageTime = 0;
@@ -18,6 +68,7 @@ function setupHandlers(io, socket) {
     socket.roomId = roomId;
     socket.userId = userId;
     socket.nickname = nickname;
+    socket.isHost = !!isHost;
     socket.joinedAt = Date.now();
 
     await addMember(roomId, userId, {
@@ -26,7 +77,7 @@ function setupHandlers(io, socket) {
       isHost: !!isHost
     });
 
-    const members = await getMembers(roomId);
+    const members = await getLiveRoomMembers(io, roomId);
     
     const msg = {
       type: 'MEMBER_JOINED',
@@ -84,7 +135,16 @@ function setupHandlers(io, socket) {
 
     try {
       const voiceUsers = await getVoiceUsers(roomId);
-      socket.emit('webrtc_voice_users_list', { users: voiceUsers });
+      const liveUserIds = new Set(members.map(m => String(m.userId)));
+      const cleanVoiceUsers = [];
+      for (const vUid of voiceUsers) {
+        if (liveUserIds.has(String(vUid))) {
+          cleanVoiceUsers.push(vUid);
+        } else {
+          await removeVoiceUser(roomId, vUid).catch(() => {});
+        }
+      }
+      socket.emit('webrtc_voice_users_list', { users: cleanVoiceUsers });
     } catch (e) {
       console.error('Error fetching voice users on join:', e);
     }
@@ -254,6 +314,59 @@ function setupHandlers(io, socket) {
     }
   });
 
+  // Host moderation: Kick participant from room
+  socket.on('kick_user', async ({ targetUserId }) => {
+    if (!socket.roomId || !socket.isHost || !targetUserId) return;
+    if (String(targetUserId) === String(socket.userId)) return; // Cannot kick self
+
+    const socketRoom = io.sockets.adapter.rooms.get(socket.roomId);
+    if (socketRoom) {
+      for (const sId of Array.from(socketRoom)) {
+        const s = io.sockets.sockets.get(sId);
+        if (s && String(s.userId) === String(targetUserId)) {
+          s.emit('kicked');
+          s.leave(socket.roomId);
+          if (s.isVoiceActive) {
+            s.isVoiceActive = false;
+            await removeVoiceUser(socket.roomId, targetUserId).catch(() => {});
+            io.to(socket.roomId).emit('webrtc_peer_left_voice', { userId: String(targetUserId) });
+          }
+        }
+      }
+    }
+
+    await removeMember(socket.roomId, targetUserId).catch(() => {});
+    await removeVoiceUser(socket.roomId, targetUserId).catch(() => {});
+    const members = await getLiveRoomMembers(io, socket.roomId);
+    io.to(socket.roomId).emit('message', {
+      type: 'MEMBER_LEFT',
+      roomId: socket.roomId,
+      senderId: targetUserId,
+      timestamp: Date.now(),
+      payload: {
+        nickname: 'Участник',
+        members
+      }
+    });
+
+    const voiceUsers = await getVoiceUsers(socket.roomId).catch(() => []);
+    io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
+  });
+
+  // Host moderation: Mute participant in voice call
+  socket.on('host_mute_user', ({ targetUserId }) => {
+    if (!socket.roomId || !socket.isHost || !targetUserId) return;
+    const socketRoom = io.sockets.adapter.rooms.get(socket.roomId);
+    if (!socketRoom) return;
+
+    for (const sId of Array.from(socketRoom)) {
+      const s = io.sockets.sockets.get(sId);
+      if (s && String(s.userId) === String(targetUserId)) {
+        s.emit('host_muted');
+      }
+    }
+  });
+
   socket.on('disconnect', async () => {
     if (socket.roomId && socket.userId) {
       if (socket.isVoiceActive) {
@@ -277,20 +390,38 @@ function setupHandlers(io, socket) {
           isTyping: false
         }
       });
-      await removeMember(socket.roomId, socket.userId);
-      const members = await getMembers(socket.roomId);
-      
-      const msg = {
-        type: 'MEMBER_LEFT',
-        roomId: socket.roomId,
-        senderId: socket.userId,
-        timestamp: Date.now(),
-        payload: {
-          nickname: socket.nickname || 'User',
-          members
+
+      // Check if user still has other active sockets in this room (e.g. quick reload or another tab)
+      const socketRoom = io.sockets.adapter.rooms.get(socket.roomId);
+      let userStillConnected = false;
+      if (socketRoom) {
+        for (const sId of socketRoom) {
+          if (sId !== socket.id) {
+            const s = io.sockets.sockets.get(sId);
+            if (s && String(s.userId) === String(socket.userId)) {
+              userStillConnected = true;
+              break;
+            }
+          }
         }
-      };
-      io.to(socket.roomId).emit('message', msg);
+      }
+
+      if (!userStillConnected) {
+        await removeMember(socket.roomId, socket.userId);
+        const members = await getLiveRoomMembers(io, socket.roomId);
+        
+        const msg = {
+          type: 'MEMBER_LEFT',
+          roomId: socket.roomId,
+          senderId: socket.userId,
+          timestamp: Date.now(),
+          payload: {
+            nickname: socket.nickname || 'User',
+            members
+          }
+        };
+        io.to(socket.roomId).emit('message', msg);
+      }
     }
   });
 }
