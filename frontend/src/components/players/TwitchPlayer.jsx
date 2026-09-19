@@ -18,19 +18,41 @@ export default function TwitchPlayer({
 
   const lastRemoteAction = useRoomStore(state => state.lastRemoteAction);
 
-  // Initialize Twitch player
+  // Dynamically load Twitch Embed SDK on demand
   useEffect(() => {
-    if (!window.Twitch || !window.Twitch.Player) {
-      const checkTimer = setInterval(() => {
+    let isCancelled = false;
+
+    function loadTwitchSDK() {
+      return new Promise((resolve, reject) => {
         if (window.Twitch && window.Twitch.Player) {
-          clearInterval(checkTimer);
+          return resolve(window.Twitch);
+        }
+        const existingScript = document.getElementById('twitch-sdk-script');
+        if (existingScript) {
+          existingScript.addEventListener('load', () => resolve(window.Twitch));
+          existingScript.addEventListener('error', reject);
+          return;
+        }
+        const script = document.createElement('script');
+        script.id = 'twitch-sdk-script';
+        script.src = 'https://player.twitch.tv/js/embed/v1.js';
+        script.async = true;
+        script.onload = () => resolve(window.Twitch);
+        script.onerror = (err) => reject(err);
+        document.body.appendChild(script);
+      });
+    }
+
+    loadTwitchSDK()
+      .then(() => {
+        if (!isCancelled) {
           initPlayer();
         }
-      }, 200);
-      return () => clearInterval(checkTimer);
-    } else {
-      initPlayer();
-    }
+      })
+      .catch((err) => {
+        console.error('Failed to load Twitch SDK:', err);
+        onError?.('Не удалось загрузить плеер Twitch');
+      });
 
     function initPlayer() {
       if (!containerRef.current) return;
@@ -80,6 +102,7 @@ export default function TwitchPlayer({
     }
 
     return () => {
+      isCancelled = true;
       if (playerRef.current) {
         playerRef.current = null;
         isReadyRef.current = false;

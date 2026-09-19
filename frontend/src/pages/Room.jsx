@@ -15,7 +15,7 @@ import {
   Users,
   Check,
 } from 'lucide-react';
-import ToastContainer, { showToast } from '../components/ToastContainer';
+import { showToast } from '../components/ToastContainer';
 
 export default function Room() {
   const { roomId } = useParams();
@@ -27,7 +27,7 @@ export default function Room() {
   const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'members'
   const [isLandscape, setIsLandscape] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isManualCinemaMode, setIsManualCinemaMode] = useState(() => window.innerWidth < 768);
+  const [isManualCinemaMode, setIsManualCinemaMode] = useState(false);
   const [showFloatingChat, setShowFloatingChat] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -230,7 +230,6 @@ export default function Room() {
       ref={containerRef}
       className="flex flex-col md:flex-row h-[100dvh] w-full bg-[#0a0a0f] text-white overflow-hidden select-none relative"
     >
-      <ToastContainer />
 
       {/* Loading overlay right after joining until room data arrives */}
       {isJoining && !hasJoinedRoom && (

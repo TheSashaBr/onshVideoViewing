@@ -26,6 +26,10 @@ input, textarea, [contenteditable="true"] {
 .pr-safe { padding-right: env(safe-area-inset-right, 0px); }
 
 /* Sleek scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Play, Users, Zap } from 'lucide-react';
 import { getApiUrl } from '../utils/api';
+import { showToast } from '../components/ToastContainer';
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
@@ -22,7 +23,7 @@ export default function Home() {
       }
     } catch (err) {
       console.error('Create room error:', err);
-      alert(`Не удалось создать комнату.\n${err.message || 'Ошибка сети'}`);
+      showToast(`Не удалось создать комнату: ${err.message || 'Ошибка сети'}`, 'error', 4000);
     } finally {
       setLoading(false);
     }

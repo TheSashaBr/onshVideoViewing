@@ -191,7 +191,7 @@ export default function Player() {
       {/* URL Changer Dialog / Input */}
       {showUrlChanger && (
         <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-30 flex items-center justify-center p-4">
-          <div className="bg-gray-850 bg-gray-900 border border-gray-700 p-5 rounded-2xl max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-150">
+          <div className="bg-gray-900 border border-gray-700 p-5 rounded-2xl max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-white text-base font-bold">Сменить источник видео</h3>
               <button
