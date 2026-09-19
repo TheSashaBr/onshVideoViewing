@@ -89,7 +89,12 @@ export const useRoomStore = create((set, get) => ({
               delete nextTyping[senderId];
             }
             return {
-              chatMessages: [{ nickname: payload.nickname, text: payload.text, ts: timestamp }, ...state.chatMessages].slice(0, 100),
+              chatMessages: [...state.chatMessages, {
+                userId: senderId,
+                nickname: payload.nickname,
+                text: payload.text,
+                ts: timestamp || Date.now()
+              }].slice(-100),
               typingUsers: nextTyping
             };
           });
@@ -231,10 +236,15 @@ export const useRoomStore = create((set, get) => ({
   },
   
   sendChat: (text) => {
-    const { nickname } = get();
+    const { nickname, userId } = get();
     get().sendMessage('CHAT_MESSAGE', { nickname, text });
     set(state => ({
-      chatMessages: [{ nickname, text, ts: Date.now() }, ...state.chatMessages].slice(0, 100)
+      chatMessages: [...state.chatMessages, {
+        userId,
+        nickname,
+        text,
+        ts: Date.now()
+      }].slice(-100)
     }));
   },
 
