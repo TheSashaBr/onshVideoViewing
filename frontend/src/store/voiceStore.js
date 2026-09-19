@@ -2,30 +2,17 @@ import { create } from 'zustand';
 import { useRoomStore } from './roomStore';
 import { showToast } from '../components/ToastContainer';
 
-// High-reliability STUN and free TURN relay servers for cross-network / mobile NAT traversal
+// High-reliability public STUN servers for NAT traversal (no expiring/flaky TURN servers)
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:global.stun.twilio.com:3478' },
-    { urls: 'stun:openrelay.metered.ca:80' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
+    { urls: 'stun:stun.services.mozilla.com' },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -44,7 +31,6 @@ export const useVoiceStore = create((set, get) => ({
   peerConnections: {}, // { [userId]: RTCPeerConnection }
   remoteAudioElements: {}, // { [userId]: HTMLAudioElement }
   pendingCandidates: {}, // { [userId]: RTCIceCandidateInit[] }
-  animationFrameId: null,
 
   // Global room listener initialized on room join (works even before user clicks join voice)
   initVoiceRoomListeners: (socket) => {
@@ -55,12 +41,23 @@ export const useVoiceStore = create((set, get) => ({
 
     socket.on('webrtc_voice_users_list', ({ users }) => {
       if (Array.isArray(users)) {
-        set({ roomVoiceUsers: new Set(users.map(u => String(u))) });
+        const userSet = new Set(users.map(u => String(u)));
+        // If current user is locally in voice, preserve local presence
+        const myUid = useRoomStore.getState().userId;
+        if (get().isInVoice && myUid) {
+          userSet.add(String(myUid));
+        }
+        set({ roomVoiceUsers: userSet });
       }
     });
 
     socket.on('webrtc_peer_left_voice', ({ userId }) => {
       const uidStr = String(userId);
+      const myUid = String(useRoomStore.getState().userId || '');
+      // Don't remove self unless we've actually left voice
+      if (uidStr === myUid && get().isInVoice) {
+        return;
+      }
       const roomVoiceUsers = new Set(get().roomVoiceUsers);
       roomVoiceUsers.delete(uidStr);
       set({ roomVoiceUsers });
@@ -70,12 +67,14 @@ export const useVoiceStore = create((set, get) => ({
     });
 
     // Handle host-initiated mute
-    window.addEventListener('onsh_host_muted', () => {
+    const handleHostMute = () => {
       const { isInVoice, isMuted, toggleMute } = get();
       if (isInVoice && !isMuted) {
         toggleMute();
       }
-    });
+    };
+    window.removeEventListener('onsh_host_muted', handleHostMute);
+    window.addEventListener('onsh_host_muted', handleHostMute);
 
     socket.emit('webrtc_get_voice_users');
   },
@@ -162,7 +161,7 @@ export const useVoiceStore = create((set, get) => ({
   },
 
   leaveVoice: () => {
-    const { localStream, peerConnections, remoteAudioElements, animationFrameId, sharedAudioContext } = get();
+    const { localStream, peerConnections, remoteAudioElements, sharedAudioContext } = get();
     const socket = useRoomStore.getState().socket;
     const myUserId = String(useRoomStore.getState().userId || '');
 
@@ -191,10 +190,6 @@ export const useVoiceStore = create((set, get) => ({
       } catch (e) {}
     });
 
-    if (animationFrameId) {
-      cancelAnimationFrame(animationFrameId);
-    }
-
     const roomVoiceUsers = new Set(get().roomVoiceUsers);
     if (myUserId) roomVoiceUsers.delete(myUserId);
 
@@ -209,7 +204,6 @@ export const useVoiceStore = create((set, get) => ({
       roomVoiceUsers,
       activeSpeakers: new Set(),
       talkingUsers: new Set(),
-      animationFrameId: null,
       error: null,
     });
 
@@ -246,7 +240,7 @@ export const useVoiceStore = create((set, get) => ({
       const currentRoomVoice = new Set(get().roomVoiceUsers);
 
       users.forEach(u => {
-        if (u.userId) {
+        if (u && u.userId) {
           const uid = String(u.userId);
           currentSpeakers.add(uid);
           currentRoomVoice.add(uid);
@@ -254,19 +248,16 @@ export const useVoiceStore = create((set, get) => ({
       });
       set({ activeSpeakers: currentSpeakers, roomVoiceUsers: currentRoomVoice });
 
-      // Automatically initiate WebRTC peer connections with existing participants in voice
-      for (const u of users) {
-        const peerId = String(u.userId);
-        if (peerId && peerId !== String(myUserId) && !get().peerConnections[peerId]) {
-          await get().createPeerConnection(peerId, true, stream);
-        }
-      }
+      // NOTE: Strict one-way negotiation. As newcomer, we do NOT initiate offers to existing peers.
+      // The existing peers receive 'webrtc_peer_joined_voice' and send the offer to us.
+      // We will answer their offers when received in 'webrtc_signal_relay'.
+      // This completely eliminates WebRTC glare and negotiation collisions.
     });
 
-    // When a new peer joins voice, create an offer to them
+    // When a new peer joins voice, existing peers initiate the connection and send the offer
     socket.on('webrtc_peer_joined_voice', async ({ userId: rawPeerId, nickname }) => {
       const peerId = String(rawPeerId);
-      if (peerId === String(myUserId)) return;
+      if (!peerId || peerId === String(myUserId)) return;
 
       const currentSpeakers = new Set(get().activeSpeakers);
       currentSpeakers.add(peerId);
@@ -274,11 +265,14 @@ export const useVoiceStore = create((set, get) => ({
       currentRoomVoice.add(peerId);
       set({ activeSpeakers: currentSpeakers, roomVoiceUsers: currentRoomVoice });
 
-      showToast(`${nickname || 'Участник'} подключился к голосовому чату`, 'info');
+      if (nickname) {
+        showToast(`${nickname} подключился к голосовому чату`, 'info');
+      }
 
-      // Create peer connection as initiator and send offer if not already connecting
-      if (!get().peerConnections[peerId]) {
-        await get().createPeerConnection(peerId, true, stream);
+      // Existing peer initiates peer connection with isInitiator = true
+      const activeStream = stream || get().localStream;
+      if (activeStream && get().isInVoice) {
+        await get().createPeerConnection(peerId, true, activeStream);
       }
     });
 
@@ -290,8 +284,9 @@ export const useVoiceStore = create((set, get) => ({
       if (targetUserId !== String(myUserId) || !signal) return;
 
       let pc = get().peerConnections[senderUserId];
+      const activeStream = stream || get().localStream;
 
-      // If we receive an offer and have no connection yet
+      // If we receive an incoming offer and don't have a peer connection yet
       if (!pc && signal.type === 'offer') {
         const currentSpeakers = new Set(get().activeSpeakers);
         currentSpeakers.add(senderUserId);
@@ -299,7 +294,7 @@ export const useVoiceStore = create((set, get) => ({
         currentRoomVoice.add(senderUserId);
         set({ activeSpeakers: currentSpeakers, roomVoiceUsers: currentRoomVoice });
 
-        pc = await get().createPeerConnection(senderUserId, false, stream);
+        pc = await get().createPeerConnection(senderUserId, false, activeStream);
       }
 
       // Handle ICE Candidate
@@ -315,7 +310,7 @@ export const useVoiceStore = create((set, get) => ({
         }
 
         try {
-          await pc.addIceCandidate(signal.candidate);
+          await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
         } catch (err) {
           console.warn('addIceCandidate error:', err);
         }
@@ -326,7 +321,7 @@ export const useVoiceStore = create((set, get) => ({
 
       try {
         if (signal.type === 'offer') {
-          // Perfect negotiation collision check
+          // In case of rare glare / simultaneous offers, tie-breaker: polite peer rolls back
           if (pc.signalingState !== 'stable') {
             const isPolite = String(myUserId) < String(senderUserId);
             if (isPolite) {
@@ -348,10 +343,11 @@ export const useVoiceStore = create((set, get) => ({
           // Flush queued candidates for this peer
           await get().flushQueuedCandidates(senderUserId, pc);
         } else if (signal.type === 'answer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(signal));
-
-          // Flush queued candidates for this peer
-          await get().flushQueuedCandidates(senderUserId, pc);
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal));
+            // Flush queued candidates for this peer
+            await get().flushQueuedCandidates(senderUserId, pc);
+          }
         }
       } catch (err) {
         console.error('Error handling WebRTC signal:', err);
@@ -363,7 +359,7 @@ export const useVoiceStore = create((set, get) => ({
     const queue = get().pendingCandidates[peerId] || [];
     for (const cand of queue) {
       try {
-        await pc.addIceCandidate(cand);
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
       } catch (e) {
         console.warn('Error flushing queued ICE candidate:', e);
       }
@@ -377,16 +373,26 @@ export const useVoiceStore = create((set, get) => ({
 
   createPeerConnection: async (peerId, isInitiator, stream) => {
     const socket = useRoomStore.getState().socket;
+    const existingPc = get().peerConnections[peerId];
+    if (existingPc) {
+      try {
+        existingPc.close();
+      } catch (e) {}
+    }
+
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
     // Add local microphone audio tracks
-    stream.getAudioTracks().forEach(track => {
-      pc.addTrack(track, stream);
-    });
+    const activeStream = stream || get().localStream;
+    if (activeStream) {
+      activeStream.getAudioTracks().forEach(track => {
+        pc.addTrack(track, activeStream);
+      });
+    }
 
     // Send local ICE candidates to peer
     pc.onicecandidate = (event) => {
-      if (event.candidate && socket) {
+      if (event.candidate && socket && socket.connected) {
         socket.emit('webrtc_signal', {
           targetUserId: peerId,
           signal: { candidate: event.candidate },
@@ -396,42 +402,17 @@ export const useVoiceStore = create((set, get) => ({
 
     // Receive incoming remote audio track
     pc.ontrack = (event) => {
-      // Safe fallback for browsers where event.streams is empty in Unified Plan
       const remoteStream = (event.streams && event.streams[0])
         ? event.streams[0]
         : new MediaStream([event.track]);
 
-      const ctx = get().sharedAudioContext;
-
-      // 1. Direct Web Audio API playback
-      let webAudioSuccess = false;
-      if (ctx) {
-        try {
-          if (ctx.state === 'suspended') {
-            ctx.resume().catch(() => {});
-          }
-          const source = ctx.createMediaStreamSource(remoteStream);
-          source.connect(ctx.destination);
-
-          // Connect to analyser for speech detection
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 256;
-          analyser.smoothingTimeConstant = 0.4;
-          source.connect(analyser);
-          get().startSpeechVisualizerLoop(peerId, analyser);
-          webAudioSuccess = true;
-        } catch (e) {
-          console.warn('Web Audio direct routing error:', e);
-        }
-      }
-
-      // 2. HTML Audio Element (muted by default if Web Audio succeeds to prevent double-echo)
+      // 1. Play audio via unmuted HTMLAudioElement for native hardware AEC (acoustic echo cancellation)
       let audio = get().remoteAudioElements[peerId];
       if (!audio) {
         audio = document.createElement('audio');
         audio.autoplay = true;
         audio.playsInline = true;
-        audio.muted = webAudioSuccess; // Only unmute if Web Audio failed
+        audio.muted = false; // Never mute playback - allows hardware echo cancellation and loud audio
         audio.volume = 1.0;
         audio.style.display = 'none';
         document.body.appendChild(audio);
@@ -443,22 +424,47 @@ export const useVoiceStore = create((set, get) => ({
 
       audio.srcObject = remoteStream;
       audio.play().catch(e => {
-        if (!webAudioSuccess) {
-          audio.muted = false;
-          audio.play().catch(err => console.warn('Audio element play failed:', err));
-        }
+        console.warn('Remote audio autoplay warning:', e);
       });
+
+      // 2. Connect to Analyser for speech visualizer (do NOT connect to ctx.destination!)
+      const ctx = get().sharedAudioContext;
+      if (ctx) {
+        try {
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+          const source = ctx.createMediaStreamSource(remoteStream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          analyser.smoothingTimeConstant = 0.4;
+          source.connect(analyser);
+          get().startSpeechVisualizerLoop(peerId, analyser, false);
+        } catch (e) {
+          console.warn('Analyser routing error:', e);
+        }
+      }
     };
 
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === 'failed') {
-        pc.restartIce?.();
+        if (typeof pc.restartIce === 'function') {
+          pc.restartIce();
+        }
       }
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-        get().removePeer(peerId);
+      if (pc.connectionState === 'failed') {
+        console.warn(`Connection to peer ${peerId} failed, attempting reconnect...`);
+        const activeStream = get().localStream;
+        if (isInitiator && activeStream && get().isInVoice) {
+          setTimeout(() => {
+            if (get().isInVoice && get().roomVoiceUsers.has(peerId)) {
+              get().createPeerConnection(peerId, true, activeStream);
+            }
+          }, 1500);
+        }
       }
     };
 

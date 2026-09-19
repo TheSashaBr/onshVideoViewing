@@ -33,6 +33,7 @@ export default function Members() {
 
   const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
   const talkingUsers = useVoiceStore(state => state.talkingUsers);
+  const isInVoice = useVoiceStore(state => state.isInVoice);
   const isMuted = useVoiceStore(state => state.isMuted);
 
   const [confirmKickId, setConfirmKickId] = useState(null);
@@ -51,7 +52,7 @@ export default function Members() {
         ]
       : [];
 
-  const voiceCount = roomVoiceUsers.size;
+  const voiceCount = Math.max(roomVoiceUsers.size, isInVoice ? 1 : 0);
 
   const handleConfirmKick = (userId) => {
     kickUser(userId);
@@ -91,7 +92,7 @@ export default function Members() {
       >
         {displayMembers.map(m => {
           const isMe = String(m.userId) === String(currentUserId);
-          const isInCall = roomVoiceUsers.has(String(m.userId)) || roomVoiceUsers.has(m.userId);
+          const isInCall = (isMe && isInVoice) || roomVoiceUsers.has(String(m.userId)) || roomVoiceUsers.has(m.userId);
           const isTalking = talkingUsers.has(String(m.userId)) || talkingUsers.has(m.userId);
           const { avatar, isEmoji, name } = parseAvatar(m.nickname);
           const isConfirmingKick = confirmKickId === m.userId;

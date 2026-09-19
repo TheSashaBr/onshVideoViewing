@@ -101,9 +101,21 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
     }
 
     // In Voice - Panel mode
-    const voiceMembers = members.filter(
-      m => roomVoiceUsers.has(String(m.userId)) || roomVoiceUsers.has(m.userId)
-    );
+    const voiceMembersMap = new Map();
+    members.forEach(m => {
+      if (roomVoiceUsers.has(String(m.userId)) || roomVoiceUsers.has(m.userId)) {
+        voiceMembersMap.set(String(m.userId), m);
+      }
+    });
+    if (isInVoice && currentUserId && !voiceMembersMap.has(String(currentUserId))) {
+      voiceMembersMap.set(String(currentUserId), {
+        userId: currentUserId,
+        nickname: useRoomStore.getState().nickname || 'Вы',
+        isHost: useRoomStore.getState().isHost,
+        joinedAt: Date.now()
+      });
+    }
+    const voiceMembers = Array.from(voiceMembersMap.values());
 
     return (
       <section

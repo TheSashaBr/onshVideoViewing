@@ -26,7 +26,6 @@ async function getLiveRoomMembers(io, roomId) {
     if (!activeSocketsByUserId.has(uidStr)) {
       console.log(`[CLEANUP] Pruning stale member ${uidStr} (${m.nickname}) from room ${roomId}`);
       await removeMember(roomId, m.userId).catch(() => {});
-      await removeVoiceUser(roomId, m.userId).catch(() => {});
     } else {
       if (!seenUserIds.has(uidStr)) {
         seenUserIds.add(uidStr);
@@ -135,16 +134,7 @@ function setupHandlers(io, socket) {
 
     try {
       const voiceUsers = await getVoiceUsers(roomId);
-      const liveUserIds = new Set(members.map(m => String(m.userId)));
-      const cleanVoiceUsers = [];
-      for (const vUid of voiceUsers) {
-        if (liveUserIds.has(String(vUid))) {
-          cleanVoiceUsers.push(vUid);
-        } else {
-          await removeVoiceUser(roomId, vUid).catch(() => {});
-        }
-      }
-      socket.emit('webrtc_voice_users_list', { users: cleanVoiceUsers });
+      socket.emit('webrtc_voice_users_list', { users: voiceUsers || [] });
     } catch (e) {
       console.error('Error fetching voice users on join:', e);
     }
@@ -369,17 +359,24 @@ function setupHandlers(io, socket) {
 
   socket.on('disconnect', async () => {
     if (socket.roomId && socket.userId) {
-      if (socket.isVoiceActive) {
-        socket.isVoiceActive = false;
-        try {
-          await removeVoiceUser(socket.roomId, socket.userId);
-          const voiceUsers = await getVoiceUsers(socket.roomId);
-          io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
-          io.to(socket.roomId).emit('webrtc_peer_left_voice', {
-            userId: String(socket.userId)
-          });
-        } catch (e) {}
+      // Check if user still has other active sockets in this room (e.g. quick reload, transport upgrade, or another tab)
+      const socketRoom = io.sockets.adapter.rooms.get(socket.roomId);
+      let userStillConnected = false;
+      if (socketRoom) {
+        for (const sId of socketRoom) {
+          if (sId !== socket.id) {
+            const s = io.sockets.sockets.get(sId);
+            if (s && String(s.userId) === String(socket.userId)) {
+              userStillConnected = true;
+              if (socket.isVoiceActive) {
+                s.isVoiceActive = true;
+              }
+              break;
+            }
+          }
+        }
       }
+
       socket.to(socket.roomId).emit('message', {
         type: 'TYPING_STATUS',
         roomId: socket.roomId,
@@ -391,22 +388,19 @@ function setupHandlers(io, socket) {
         }
       });
 
-      // Check if user still has other active sockets in this room (e.g. quick reload or another tab)
-      const socketRoom = io.sockets.adapter.rooms.get(socket.roomId);
-      let userStillConnected = false;
-      if (socketRoom) {
-        for (const sId of socketRoom) {
-          if (sId !== socket.id) {
-            const s = io.sockets.sockets.get(sId);
-            if (s && String(s.userId) === String(socket.userId)) {
-              userStillConnected = true;
-              break;
-            }
-          }
-        }
-      }
-
       if (!userStillConnected) {
+        if (socket.isVoiceActive) {
+          socket.isVoiceActive = false;
+          try {
+            await removeVoiceUser(socket.roomId, socket.userId);
+            const voiceUsers = await getVoiceUsers(socket.roomId);
+            io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
+            io.to(socket.roomId).emit('webrtc_peer_left_voice', {
+              userId: String(socket.userId)
+            });
+          } catch (e) {}
+        }
+
         await removeMember(socket.roomId, socket.userId);
         const members = await getLiveRoomMembers(io, socket.roomId);
         

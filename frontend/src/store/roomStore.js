@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import io from 'socket.io-client';
 import { API_URL } from '../utils/api';
 import { showToast } from '../components/ToastContainer';
+import { useVoiceStore } from './voiceStore';
 
 export const useRoomStore = create((set, get) => ({
   socket: null,
@@ -26,7 +27,21 @@ export const useRoomStore = create((set, get) => ({
   },
   
   joinRoom: (roomId, userId, nickname, isHost) => {
-    const socket = io(API_URL);
+    const existingSocket = get().socket;
+    if (existingSocket) {
+      try {
+        existingSocket.disconnect();
+      } catch (e) {}
+    }
+
+    const socket = io(API_URL, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+    });
     
     set({
       socket,
@@ -38,6 +53,9 @@ export const useRoomStore = create((set, get) => ({
       isJoining: true,
       hasJoinedRoom: false
     });
+
+    // Immediately bind room voice listeners on the socket so no voice events are missed
+    useVoiceStore.getState().initVoiceRoomListeners(socket);
     
     socket.emit('join_room', { roomId, userId, nickname, isHost });
 
@@ -46,19 +64,25 @@ export const useRoomStore = create((set, get) => ({
       set({ connectionStatus: 'disconnected' });
     });
 
-    socket.on('reconnect', () => {
-      console.log('Socket reconnected, rejoining room...');
-      const { roomId, userId, nickname, isHost } = get();
-      socket.emit('join_room', { roomId, userId, nickname, isHost });
-      set({ connectionStatus: 'connected' });
-    });
-
     socket.on('reconnect_attempt', () => {
       set({ connectionStatus: 'reconnecting' });
     });
 
     socket.on('connect', () => {
       set({ connectionStatus: 'connected' });
+      const { roomId: currentRoom, userId: currentUid, nickname: currentNick, isHost: currentHost } = get();
+      if (currentRoom && currentUid) {
+        socket.emit('join_room', {
+          roomId: currentRoom,
+          userId: currentUid,
+          nickname: currentNick,
+          isHost: currentHost
+        });
+        // If user is currently in voice, restore voice presence on server
+        if (useVoiceStore.getState().isInVoice) {
+          socket.emit('webrtc_join_voice');
+        }
+      }
     });
 
     socket.on('kicked', () => {
