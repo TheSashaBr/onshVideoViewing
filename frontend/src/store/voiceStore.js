@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { useRoomStore } from './roomStore';
 import { showToast } from '../components/ToastContainer';
 
-// High-reliability public STUN & TURN servers for NAT traversal
+// High-reliability public STUN servers for NAT traversal
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -13,21 +13,6 @@ const ICE_SERVERS = {
     { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:global.stun.twilio.com:3478' },
     { urls: 'stun:stun.services.mozilla.com' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelay',
-      credential: 'openrelay',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelay',
-      credential: 'openrelay',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelay',
-      credential: 'openrelay',
-    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -65,6 +50,21 @@ export const useVoiceStore = create((set, get) => ({
           userSet.add(String(myUid));
         }
         set({ roomVoiceUsers: userSet });
+
+        // Auto-connect watchdog: ensure active peers have an established connection
+        if (get().isInVoice && myUid && get().localStream) {
+          userSet.forEach(peerId => {
+            if (peerId !== String(myUid)) {
+              const isInitiator = String(myUid) > peerId;
+              const pc = get().peerConnections[peerId];
+              const isConnected = pc && (pc.connectionState === 'connected' || pc.connectionState === 'connecting');
+              if (isInitiator && !isConnected) {
+                console.log(`[WEBRTC] Watchdog: auto-initiating connection to active peer ${peerId}`);
+                get().createPeerConnection(peerId, true, get().localStream);
+              }
+            }
+          });
+        }
       }
     });
 
@@ -92,6 +92,23 @@ export const useVoiceStore = create((set, get) => ({
     };
     window.removeEventListener('onsh_host_muted', handleHostMute);
     window.addEventListener('onsh_host_muted', handleHostMute);
+
+    // Auto-unlock audio elements on user interaction (Safari/iOS policy)
+    const unlockAllAudio = () => {
+      Object.values(get().remoteAudioElements).forEach(audio => {
+        if (audio && audio.paused) {
+          audio.play().catch(() => {});
+        }
+      });
+      const ctx = get().sharedAudioContext;
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    };
+    window.removeEventListener('click', unlockAllAudio);
+    window.removeEventListener('touchstart', unlockAllAudio);
+    window.addEventListener('click', unlockAllAudio, { passive: true });
+    window.addEventListener('touchstart', unlockAllAudio, { passive: true });
 
     // Auto re-query on tab focus / visibility
     const handleVisibility = () => {
@@ -345,10 +362,13 @@ export const useVoiceStore = create((set, get) => ({
 
       // Handle ICE Candidate
       if (signal.candidate) {
+        const candData = signal.candidate;
+        if (!candData || !candData.candidate) return;
+
         if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
           // Queue ICE candidate until remote description is set
           const pending = get().pendingCandidates[senderUserId] || [];
-          pending.push(signal.candidate);
+          pending.push(candData);
           set(state => ({
             pendingCandidates: { ...state.pendingCandidates, [senderUserId]: pending }
           }));
@@ -356,9 +376,9 @@ export const useVoiceStore = create((set, get) => ({
         }
 
         try {
-          await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          await pc.addIceCandidate(candData);
         } catch (err) {
-          console.warn('addIceCandidate error:', err);
+          console.warn('[WEBRTC] addIceCandidate error:', err);
         }
         return;
       }
@@ -378,7 +398,10 @@ export const useVoiceStore = create((set, get) => ({
           }
 
           await pc.setRemoteDescription(new RTCSessionDescription(signal));
-          const answer = await pc.createAnswer();
+          const answer = await pc.createAnswer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false,
+          });
           await pc.setLocalDescription(answer);
 
           const rId = useRoomStore.getState().roomId;
@@ -386,7 +409,10 @@ export const useVoiceStore = create((set, get) => ({
             roomId: rId,
             senderUserId: String(myUserId),
             targetUserId: senderUserId,
-            signal: answer,
+            signal: {
+              type: answer.type,
+              sdp: answer.sdp,
+            },
           });
 
           // Flush queued candidates for this peer
@@ -408,9 +434,11 @@ export const useVoiceStore = create((set, get) => ({
     const queue = get().pendingCandidates[peerId] || [];
     for (const cand of queue) {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(cand));
+        if (cand && cand.candidate) {
+          await pc.addIceCandidate(cand);
+        }
       } catch (e) {
-        console.warn('Error flushing queued ICE candidate:', e);
+        console.warn('[WEBRTC] Error flushing queued ICE candidate:', e);
       }
     }
     set(state => {
@@ -441,14 +469,21 @@ export const useVoiceStore = create((set, get) => ({
 
     // Send local ICE candidates to peer
     pc.onicecandidate = (event) => {
-      if (event.candidate && socket && socket.connected) {
+      if (event.candidate && event.candidate.candidate && socket && socket.connected) {
         const rId = useRoomStore.getState().roomId;
         const myUid = String(useRoomStore.getState().userId);
+        const candPayload = event.candidate.toJSON
+          ? event.candidate.toJSON()
+          : {
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex,
+            };
         socket.emit('webrtc_signal', {
           roomId: rId,
           senderUserId: myUid,
           targetUserId: peerId,
-          signal: { candidate: event.candidate },
+          signal: { candidate: candPayload },
         });
       }
     };
@@ -469,7 +504,14 @@ export const useVoiceStore = create((set, get) => ({
         audio.setAttribute('webkit-playsinline', '');
         audio.muted = false; // Never mute playback - allows hardware echo cancellation and loud audio
         audio.volume = 1.0;
-        audio.style.display = 'none';
+        // Never use display: none! WebKit mutes audio elements with display: none
+        audio.style.position = 'fixed';
+        audio.style.top = '-9999px';
+        audio.style.left = '-9999px';
+        audio.style.width = '1px';
+        audio.style.height = '1px';
+        audio.style.opacity = '0.01';
+        audio.style.pointerEvents = 'none';
         document.body.appendChild(audio);
 
         set(state => ({
@@ -479,7 +521,7 @@ export const useVoiceStore = create((set, get) => ({
 
       audio.srcObject = remoteStream;
       audio.play().catch(e => {
-        console.warn('Remote audio autoplay warning:', e);
+        console.warn('[VOICE] Remote audio autoplay deferred, will unlock on interaction:', e);
       });
 
       // 2. Connect to Analyser for speech visualizer (do NOT connect to ctx.destination!)
@@ -510,8 +552,14 @@ export const useVoiceStore = create((set, get) => ({
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') {
-        console.warn(`Connection to peer ${peerId} failed, attempting reconnect...`);
+      console.log(`[WEBRTC] Peer ${peerId} connection state:`, pc.connectionState);
+      if (pc.connectionState === 'connected') {
+        const audio = get().remoteAudioElements[peerId];
+        if (audio && audio.paused) {
+          audio.play().catch(() => {});
+        }
+      } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        console.warn(`[WEBRTC] Connection to peer ${peerId} dropped (${pc.connectionState}), reconnecting...`);
         const activeStream = get().localStream;
         if (isInitiator && activeStream && get().isInVoice) {
           setTimeout(() => {
@@ -529,7 +577,10 @@ export const useVoiceStore = create((set, get) => ({
 
     if (isInitiator) {
       try {
-        const offer = await pc.createOffer();
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: false,
+        });
         await pc.setLocalDescription(offer);
         const rId = useRoomStore.getState().roomId;
         const myUid = String(useRoomStore.getState().userId);
@@ -537,7 +588,10 @@ export const useVoiceStore = create((set, get) => ({
           roomId: rId,
           senderUserId: myUid,
           targetUserId: peerId,
-          signal: offer,
+          signal: {
+            type: offer.type,
+            sdp: offer.sdp,
+          },
         });
       } catch (err) {
         console.error('Error creating WebRTC offer:', err);

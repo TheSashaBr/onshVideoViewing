@@ -57,12 +57,16 @@ async function broadcastVoiceUsers(io, roomId) {
   if (!roomId) return [];
   const socketRoom = io.sockets.adapter.rooms.get(roomId);
   const activeVoiceUserIds = new Set();
+  const connectedUserIds = new Set();
 
   if (socketRoom) {
     for (const sId of socketRoom) {
       const s = io.sockets.sockets.get(sId);
-      if (s && s.userId && s.isVoiceActive) {
-        activeVoiceUserIds.add(String(s.userId));
+      if (s && s.userId) {
+        connectedUserIds.add(String(s.userId));
+        if (s.isVoiceActive) {
+          activeVoiceUserIds.add(String(s.userId));
+        }
       }
     }
   }
@@ -70,16 +74,20 @@ async function broadcastVoiceUsers(io, roomId) {
   try {
     const redisVoiceUsers = await getVoiceUsers(roomId);
     if (Array.isArray(redisVoiceUsers)) {
-      redisVoiceUsers.forEach(uid => {
-        if (uid) activeVoiceUserIds.add(String(uid));
-      });
+      for (const uid of redisVoiceUsers) {
+        const uidStr = String(uid);
+        if (!connectedUserIds.has(uidStr)) {
+          console.log(`[CLEANUP] Pruning dead voice user ${uidStr} from Redis for room ${roomId}`);
+          await removeVoiceUser(roomId, uidStr).catch(() => {});
+        }
+      }
     }
   } catch (err) {
-    console.error('[WEBRTC] Error reading voice users from Redis:', err);
+    console.error('[WEBRTC] Error synchronizing voice users with Redis:', err);
   }
 
   const voiceUsersList = Array.from(activeVoiceUserIds);
-  console.log(`[WEBRTC] Room ${roomId} active voice users (${voiceUsersList.length}):`, voiceUsersList);
+  console.log(`[WEBRTC] Room ${roomId} real active voice users (${voiceUsersList.length}):`, voiceUsersList);
   io.to(roomId).emit('webrtc_voice_users_list', { users: voiceUsersList });
   return voiceUsersList;
 }
@@ -279,12 +287,31 @@ function setupHandlers(io, socket) {
     const { targetUserId, signal } = payload;
     if (!targetRoomId || !targetUserId || !signal || !senderUserId) return;
 
-    // Relay signaling offer/answer/candidate to specific target peer in the room
-    io.to(targetRoomId).emit('webrtc_signal_relay', {
-      senderUserId: String(senderUserId),
-      targetUserId: String(targetUserId),
-      signal
-    });
+    // Direct delivery to target user socket if available
+    const socketRoom = io.sockets.adapter.rooms.get(targetRoomId);
+    let deliveredDirectly = false;
+    if (socketRoom) {
+      for (const sId of socketRoom) {
+        const s = io.sockets.sockets.get(sId);
+        if (s && String(s.userId) === String(targetUserId)) {
+          s.emit('webrtc_signal_relay', {
+            senderUserId: String(senderUserId),
+            targetUserId: String(targetUserId),
+            signal
+          });
+          deliveredDirectly = true;
+        }
+      }
+    }
+
+    // Fallback broadcast to room if socket not found directly
+    if (!deliveredDirectly) {
+      io.to(targetRoomId).emit('webrtc_signal_relay', {
+        senderUserId: String(senderUserId),
+        targetUserId: String(targetUserId),
+        signal
+      });
+    }
   });
 
   socket.on('webrtc_join_voice', async (payload = {}) => {
