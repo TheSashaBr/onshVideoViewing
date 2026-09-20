@@ -1,7 +1,7 @@
 import React from 'react';
 import { useVoiceStore } from '../store/voiceStore';
 import { useRoomStore } from '../store/roomStore';
-import { Mic, MicOff, PhoneCall, PhoneOff, Loader2, Volume2, Radio } from 'lucide-react';
+import { Mic, MicOff, PhoneCall, PhoneOff, Loader2, Volume2, Radio, RefreshCw } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 // Animated audio frequency equalizer bars
@@ -23,11 +23,15 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
   const isInVoice = useVoiceStore(state => state.isInVoice);
   const isMuted = useVoiceStore(state => state.isMuted);
   const isConnecting = useVoiceStore(state => state.isConnecting);
+  const audioBlocked = useVoiceStore(state => state.audioBlocked);
+  const peerConnectionStates = useVoiceStore(state => state.peerConnectionStates);
   const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
   const talkingUsers = useVoiceStore(state => state.talkingUsers);
   const joinVoice = useVoiceStore(state => state.joinVoice);
   const leaveVoice = useVoiceStore(state => state.leaveVoice);
   const toggleMute = useVoiceStore(state => state.toggleMute);
+  const unlockAudioPlayback = useVoiceStore(state => state.unlockAudioPlayback);
+  const retryPeerConnection = useVoiceStore(state => state.retryPeerConnection);
 
   const members = useRoomStore(state => state.members);
   const currentUserId = useRoomStore(state => state.userId);
@@ -168,13 +172,25 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
           )}
         </div>
 
+        {/* Audio Blocked Alert Banner (iOS / Browser autoplay restriction) */}
+        {audioBlocked && (
+          <button
+            onClick={unlockAudioPlayback}
+            className="w-full mb-2.5 py-2 px-3 bg-amber-500/20 hover:bg-amber-500/30 active:scale-[0.98] border border-amber-400/50 rounded-xl text-amber-300 text-xs font-semibold flex items-center justify-center gap-2 animate-pulse cursor-pointer shadow-sm"
+          >
+            <Volume2 className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>Звук заблокирован. Нажмите сюда, чтобы включить</span>
+          </button>
+        )}
+
         {/* Voice Participants List */}
-        <div className="space-y-1.5 mb-3 max-h-36 overflow-y-auto pr-1">
+        <div className="space-y-1.5 mb-3 max-h-44 overflow-y-auto pr-1">
           {voiceMembers.map(m => {
             const isMe = m.userId === currentUserId;
             const isTalking = talkingUsers.has(m.userId) || talkingUsers.has(String(m.userId));
             const avatarChar = getAvatarChar(m.nickname);
             const cleanNick = getCleanNick(m.nickname);
+            const connState = peerConnectionStates[m.userId] || 'connecting';
 
             return (
               <div
@@ -197,9 +213,31 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
                   >
                     {avatarChar}
                   </div>
-                  <span className="truncate font-medium text-gray-200 text-xs">
-                    {cleanNick} {isMe && <span className="text-accent text-[10px] font-semibold">(вы)</span>}
-                  </span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="truncate font-medium text-gray-200 text-xs">
+                      {cleanNick} {isMe && <span className="text-accent text-[10px] font-semibold">(вы)</span>}
+                    </span>
+                    {!isMe && (
+                      <span className="text-[10px] text-gray-400 flex items-center gap-1">
+                        {connState === 'connected' ? (
+                          <span className="text-emerald-400 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                            в сети
+                          </span>
+                        ) : connState === 'failed' ? (
+                          <span className="text-red-400 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                            сбой связи
+                          </span>
+                        ) : (
+                          <span className="text-amber-300 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                            подключение...
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -212,6 +250,15 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
                     <span className="p-1 rounded-md bg-red-500/20 text-red-400" title="Микрофон выключен">
                       <MicOff className="w-3 h-3" />
                     </span>
+                  ) : !isMe && connState === 'failed' ? (
+                    <button
+                      onClick={() => retryPeerConnection(m.userId)}
+                      className="p-1 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-300 transition cursor-pointer"
+                      title="Переподключить участника"
+                      aria-label="Переподключить участника"
+                    >
+                      <RefreshCw className="w-3 h-3 animate-spin-once" />
+                    </button>
                   ) : (
                     <span className="p-1 rounded-md text-gray-400" title="В звонке">
                       <Mic className="w-3 h-3" />
@@ -363,6 +410,18 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
           <Mic className="w-3.5 h-3.5 text-emerald-400" />
         )}
       </button>
+
+      {/* Unblock audio if browser policy prevented autoplay */}
+      {audioBlocked && (
+        <button
+          onClick={unlockAudioPlayback}
+          aria-label="Включить звук"
+          className="p-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 transition active:scale-95 cursor-pointer border border-amber-400/50 animate-pulse"
+          title="Нажмите, чтобы включить звук"
+        >
+          <Volume2 className="w-3.5 h-3.5 text-amber-400" />
+        </button>
+      )}
 
       {/* Leave Voice Button */}
       <button

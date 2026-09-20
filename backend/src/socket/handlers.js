@@ -3,6 +3,9 @@ const {
   addChatMessage, getChatMessages, addVoiceUser, removeVoiceUser, getVoiceUsers
 } = require('../redis/repository');
 
+// In-memory map to buffer temporary mobile network blips / permission prompts
+const pendingDisconnectTimers = new Map(); // key: `${roomId}:${userId}` -> NodeJS.Timeout
+
 // Helper to get active members verified against connected Socket.IO sockets
 async function getLiveRoomMembers(io, roomId) {
   const socketRoom = io.sockets.adapter.rooms.get(roomId);
@@ -23,7 +26,8 @@ async function getLiveRoomMembers(io, roomId) {
   // Prune any stale members from Redis that have no active socket in the room
   for (const m of redisMembers) {
     const uidStr = String(m.userId);
-    if (!activeSocketsByUserId.has(uidStr)) {
+    const inGracePeriod = pendingDisconnectTimers.has(`${roomId}:${uidStr}`);
+    if (!activeSocketsByUserId.has(uidStr) && !inGracePeriod) {
       console.log(`[CLEANUP] Pruning stale member ${uidStr} (${m.nickname}) from room ${roomId}`);
       await removeMember(roomId, m.userId).catch(() => {});
     } else {
@@ -71,6 +75,15 @@ async function broadcastVoiceUsers(io, roomId) {
     }
   }
 
+  // Preserve users who are in a short grace period (mobile tab switch or mic permission prompt)
+  for (const [key] of pendingDisconnectTimers.entries()) {
+    const [tRoomId, tUserId] = key.split(':');
+    if (tRoomId === roomId && tUserId) {
+      activeVoiceUserIds.add(String(tUserId));
+      connectedUserIds.add(String(tUserId));
+    }
+  }
+
   try {
     const redisVoiceUsers = await getVoiceUsers(roomId);
     if (Array.isArray(redisVoiceUsers)) {
@@ -103,12 +116,26 @@ function setupHandlers(io, socket) {
       return;
     }
 
+    const discKey = `${roomId}:${userId}`;
+    if (pendingDisconnectTimers.has(discKey)) {
+      clearTimeout(pendingDisconnectTimers.get(discKey));
+      pendingDisconnectTimers.delete(discKey);
+    }
+
     socket.join(roomId);
     socket.roomId = roomId;
-    socket.userId = userId;
+    socket.userId = String(userId);
     socket.nickname = nickname;
     socket.isHost = !!isHost;
     socket.joinedAt = Date.now();
+
+    // Check if user was previously marked in voice in Redis
+    try {
+      const redisVoice = await getVoiceUsers(roomId);
+      if (Array.isArray(redisVoice) && redisVoice.includes(String(userId))) {
+        socket.isVoiceActive = true;
+      }
+    } catch (e) {}
 
     await addMember(roomId, userId, {
       nickname,
@@ -324,6 +351,12 @@ function setupHandlers(io, socket) {
       return;
     }
 
+    const discKey = `${roomId}:${userId}`;
+    if (pendingDisconnectTimers.has(discKey)) {
+      clearTimeout(pendingDisconnectTimers.get(discKey));
+      pendingDisconnectTimers.delete(discKey);
+    }
+
     socket.roomId = roomId;
     socket.userId = String(userId);
     if (nickname) socket.nickname = nickname;
@@ -462,31 +495,57 @@ function setupHandlers(io, socket) {
       });
 
       if (!userStillConnected) {
-        if (socket.isVoiceActive) {
-          socket.isVoiceActive = false;
-          try {
-            await removeVoiceUser(socket.roomId, socket.userId);
-          } catch (e) {}
-          await broadcastVoiceUsers(io, socket.roomId);
-          io.to(socket.roomId).emit('webrtc_peer_left_voice', {
-            userId: String(socket.userId)
-          });
+        const dRoomId = socket.roomId;
+        const dUserId = String(socket.userId);
+        const wasVoiceActive = socket.isVoiceActive;
+        const disconnectKey = `${dRoomId}:${dUserId}`;
+
+        // Clear any prior timer
+        if (pendingDisconnectTimers.has(disconnectKey)) {
+          clearTimeout(pendingDisconnectTimers.get(disconnectKey));
         }
 
-        await removeMember(socket.roomId, socket.userId);
-        const members = await getLiveRoomMembers(io, socket.roomId);
-        
-        const msg = {
-          type: 'MEMBER_LEFT',
-          roomId: socket.roomId,
-          senderId: socket.userId,
-          timestamp: Date.now(),
-          payload: {
-            nickname: socket.nickname || 'User',
-            members
+        const timer = setTimeout(async () => {
+          pendingDisconnectTimers.delete(disconnectKey);
+          // Check if user reconnected in the meantime
+          const liveRoom = io.sockets.adapter.rooms.get(dRoomId);
+          let reconnected = false;
+          if (liveRoom) {
+            for (const sId of liveRoom) {
+              const s = io.sockets.sockets.get(sId);
+              if (s && String(s.userId) === dUserId) {
+                reconnected = true;
+                break;
+              }
+            }
           }
-        };
-        io.to(socket.roomId).emit('message', msg);
+
+          if (!reconnected) {
+            if (wasVoiceActive) {
+              await removeVoiceUser(dRoomId, dUserId).catch(() => {});
+              await broadcastVoiceUsers(io, dRoomId);
+              io.to(dRoomId).emit('webrtc_peer_left_voice', {
+                userId: dUserId
+              });
+            }
+
+            await removeMember(dRoomId, dUserId).catch(() => {});
+            const members = await getLiveRoomMembers(io, dRoomId);
+            const msg = {
+              type: 'MEMBER_LEFT',
+              roomId: dRoomId,
+              senderId: dUserId,
+              timestamp: Date.now(),
+              payload: {
+                nickname: socket.nickname || 'Участник',
+                members
+              }
+            };
+            io.to(dRoomId).emit('message', msg);
+          }
+        }, 4000);
+
+        pendingDisconnectTimers.set(disconnectKey, timer);
       }
     }
   });

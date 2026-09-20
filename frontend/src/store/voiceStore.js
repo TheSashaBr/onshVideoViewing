@@ -14,13 +14,14 @@ const ICE_SERVERS = {
     { urls: 'stun:global.stun.twilio.com:3478' },
     { urls: 'stun:stun.services.mozilla.com' },
   ],
-  iceCandidatePoolSize: 10,
 };
 
 export const useVoiceStore = create((set, get) => ({
   isInVoice: false,
   isMuted: false,
   isConnecting: false,
+  audioBlocked: false, // browser autoplay policy requires user interaction
+  peerConnectionStates: {}, // { [userId]: 'connecting' | 'connected' | 'failed' | 'disconnected' }
   roomVoiceUsers: new Set(), // Set of all userIds currently in voice in this room
   activeSpeakers: new Set(), // Set of userIds with active peer connections
   talkingUsers: new Set(), // Set of userIds currently speaking (audio level > threshold)
@@ -31,6 +32,41 @@ export const useVoiceStore = create((set, get) => ({
   peerConnections: {}, // { [userId]: RTCPeerConnection }
   remoteAudioElements: {}, // { [userId]: HTMLAudioElement }
   pendingCandidates: {}, // { [userId]: RTCIceCandidateInit[] }
+  voiceHeartbeatInterval: null,
+
+  // Unlock audio playback across all peers (called on user gesture or banner click)
+  unlockAudioPlayback: async () => {
+    const ctx = get().sharedAudioContext;
+    if (ctx && ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
+    let anySuccess = false;
+    for (const audio of Object.values(get().remoteAudioElements)) {
+      if (audio) {
+        try {
+          await audio.play();
+          anySuccess = true;
+        } catch (e) {}
+      }
+    }
+    set({ audioBlocked: false });
+    if (anySuccess) {
+      showToast('Звук в голосовом чате включен', 'success', 2500);
+    }
+  },
+
+  retryPeerConnection: (peerId) => {
+    const uid = String(peerId);
+    const myUid = String(useRoomStore.getState().userId || '');
+    const isInitiator = myUid > uid;
+    const stream = get().localStream;
+    if (stream && get().isInVoice) {
+      set(prev => ({
+        peerConnectionStates: { ...prev.peerConnectionStates, [uid]: 'connecting' }
+      }));
+      get().createPeerConnection(uid, isInitiator, stream);
+    }
+  },
 
   // Global room listener initialized on room join (works even before user clicks join voice)
   initVoiceRoomListeners: (socket, roomId) => {
@@ -57,8 +93,12 @@ export const useVoiceStore = create((set, get) => ({
             if (peerId !== String(myUid)) {
               const isInitiator = String(myUid) > peerId;
               const pc = get().peerConnections[peerId];
-              const isConnected = pc && (pc.connectionState === 'connected' || pc.connectionState === 'connecting');
-              if (isInitiator && !isConnected) {
+              const isWorking = pc && (
+                pc.connectionState === 'connected' ||
+                pc.connectionState === 'connecting' ||
+                pc.connectionState === 'new'
+              );
+              if (isInitiator && !isWorking) {
                 console.log(`[WEBRTC] Watchdog: auto-initiating connection to active peer ${peerId}`);
                 get().createPeerConnection(peerId, true, get().localStream);
               }
@@ -129,7 +169,7 @@ export const useVoiceStore = create((set, get) => ({
 
   joinVoice: async () => {
     if (get().isInVoice || get().isConnecting) return;
-    set({ isConnecting: true, error: null });
+    set({ isConnecting: true, error: null, audioBlocked: false });
 
     try {
       if (!navigator?.mediaDevices?.getUserMedia) {
@@ -155,18 +195,26 @@ export const useVoiceStore = create((set, get) => ({
       }
       set({ sharedAudioContext: ctx });
 
-      // 2. Get user microphone stream with audio enhancements
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-        video: false,
-      });
+      // 2. Get user microphone stream with audio enhancements, with fallback for strict mobile browsers
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: { ideal: true },
+            noiseSuppression: { ideal: true },
+            autoGainControl: { ideal: true },
+          },
+          video: false,
+        });
+      } catch (e) {
+        console.warn('[VOICE] Advanced mic constraints rejected, fallback to basic audio:', e);
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+      }
 
-      // Ensure audio track is enabled
+      // Ensure audio tracks are enabled
       stream.getAudioTracks().forEach(track => {
         track.enabled = true;
       });
@@ -191,15 +239,31 @@ export const useVoiceStore = create((set, get) => ({
       const roomVoiceUsers = new Set(get().roomVoiceUsers);
       roomVoiceUsers.add(myUserId);
 
+      // 5. Heartbeat to maintain voice connection even across network blips
+      if (get().voiceHeartbeatInterval) {
+        clearInterval(get().voiceHeartbeatInterval);
+      }
+      const heartbeat = setInterval(() => {
+        const s = useRoomStore.getState().socket;
+        const rId = useRoomStore.getState().roomId;
+        const uId = useRoomStore.getState().userId;
+        const nick = useRoomStore.getState().nickname;
+        if (get().isInVoice && s && s.connected && rId && uId) {
+          s.emit('webrtc_join_voice', { roomId: rId, userId: String(uId), nickname: nick });
+        }
+      }, 5000);
+
       set({
         isInVoice: true,
         isMuted: false,
         isConnecting: false,
+        audioBlocked: false,
+        voiceHeartbeatInterval: heartbeat,
         roomVoiceUsers,
         activeSpeakers: new Set([myUserId]),
       });
 
-      // 5. Local speech activity detection
+      // 6. Local speech activity detection
       get().startLocalSpeechDetection(myUserId, stream, ctx);
 
       showToast('Вы подключились к голосовому чату', 'success');
@@ -219,10 +283,14 @@ export const useVoiceStore = create((set, get) => ({
   },
 
   leaveVoice: () => {
-    const { localStream, peerConnections, remoteAudioElements, sharedAudioContext } = get();
+    const { localStream, peerConnections, remoteAudioElements, voiceHeartbeatInterval } = get();
     const socket = useRoomStore.getState().socket;
     const myUserId = String(useRoomStore.getState().userId || '');
     const roomId = useRoomStore.getState().roomId;
+
+    if (voiceHeartbeatInterval) {
+      clearInterval(voiceHeartbeatInterval);
+    }
 
     if (socket && socket.connected && roomId) {
       socket.emit('webrtc_leave_voice', { roomId, userId: myUserId });
@@ -459,13 +527,24 @@ export const useVoiceStore = create((set, get) => ({
 
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
+    // Ensure audio transceiver is registered with sendrecv for mobile browsers
+    try {
+      pc.addTransceiver('audio', { direction: 'sendrecv' });
+    } catch (e) {}
+
     // Add local microphone audio tracks
     const activeStream = stream || get().localStream;
     if (activeStream) {
       activeStream.getAudioTracks().forEach(track => {
-        pc.addTrack(track, activeStream);
+        try {
+          pc.addTrack(track, activeStream);
+        } catch (e) {}
       });
     }
+
+    set(prev => ({
+      peerConnectionStates: { ...prev.peerConnectionStates, [peerId]: 'connecting' }
+    }));
 
     // Send local ICE candidates to peer
     pc.onicecandidate = (event) => {
@@ -522,51 +601,70 @@ export const useVoiceStore = create((set, get) => ({
       audio.srcObject = remoteStream;
       audio.play().catch(e => {
         console.warn('[VOICE] Remote audio autoplay deferred, will unlock on interaction:', e);
+        set({ audioBlocked: true });
       });
 
-      // 2. Connect to Analyser for speech visualizer (do NOT connect to ctx.destination!)
+      // 2. WebKit Audio Bug Fix: Clone the audio track for Analyser!
+      // In Safari on iOS/macOS, connecting remoteStream directly to createMediaStreamSource silences the HTMLAudioElement
       const ctx = get().sharedAudioContext;
       if (ctx) {
         try {
           if (ctx.state === 'suspended') {
             ctx.resume().catch(() => {});
           }
-          const source = ctx.createMediaStreamSource(remoteStream);
+          const clonedTrack = event.track.clone();
+          const visualizerStream = new MediaStream([clonedTrack]);
+          const source = ctx.createMediaStreamSource(visualizerStream);
           const analyser = ctx.createAnalyser();
           analyser.fftSize = 256;
           analyser.smoothingTimeConstant = 0.4;
           source.connect(analyser);
           get().startSpeechVisualizerLoop(peerId, analyser, false);
         } catch (e) {
-          console.warn('Analyser routing error:', e);
+          console.warn('[VOICE] Visualizer track clone error:', e);
         }
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed') {
-        if (typeof pc.restartIce === 'function') {
-          pc.restartIce();
-        }
-      }
+      console.log(`[WEBRTC] Peer ${peerId} ICE state:`, pc.iceConnectionState);
     };
 
     pc.onconnectionstatechange = () => {
-      console.log(`[WEBRTC] Peer ${peerId} connection state:`, pc.connectionState);
-      if (pc.connectionState === 'connected') {
+      const state = pc.connectionState;
+      console.log(`[WEBRTC] Peer ${peerId} connection state:`, state);
+      set(prev => ({
+        peerConnectionStates: { ...prev.peerConnectionStates, [peerId]: state }
+      }));
+
+      if (state === 'connected') {
+        set({ audioBlocked: false });
         const audio = get().remoteAudioElements[peerId];
         if (audio && audio.paused) {
-          audio.play().catch(() => {});
+          audio.play().catch(() => set({ audioBlocked: true }));
         }
-      } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        console.warn(`[WEBRTC] Connection to peer ${peerId} dropped (${pc.connectionState}), reconnecting...`);
-        const activeStream = get().localStream;
-        if (isInitiator && activeStream && get().isInVoice) {
-          setTimeout(() => {
-            if (get().isInVoice && get().roomVoiceUsers.has(peerId)) {
-              get().createPeerConnection(peerId, true, activeStream);
+      } else if (state === 'failed') {
+        console.warn(`[WEBRTC] Connection to peer ${peerId} failed (NAT / network), attempting ICE restart...`);
+        if (isInitiator && get().isInVoice) {
+          try {
+            if (typeof pc.restartIce === 'function') {
+              pc.restartIce();
             }
-          }, 1500);
+            pc.createOffer({ iceRestart: true })
+              .then(offer => pc.setLocalDescription(offer))
+              .then(() => {
+                const rId = useRoomStore.getState().roomId;
+                const myUid = String(useRoomStore.getState().userId);
+                const offer = pc.localDescription;
+                socket.emit('webrtc_signal', {
+                  roomId: rId,
+                  senderUserId: myUid,
+                  targetUserId: peerId,
+                  signal: { type: offer.type, sdp: offer.sdp }
+                });
+              })
+              .catch(e => console.warn('[WEBRTC] ICE restart failed:', e));
+          } catch (e) {}
         }
       }
     };
@@ -631,13 +729,14 @@ export const useVoiceStore = create((set, get) => ({
     const updatedSpeakers = new Set(get().activeSpeakers);
     updatedSpeakers.delete(uid);
 
-    const updatedTalking = new Set(get().talkingUsers);
-    updatedTalking.delete(uid);
+    const updatedStates = { ...get().peerConnectionStates };
+    delete updatedStates[uid];
 
     set({
       peerConnections: updatedPcs,
       remoteAudioElements: updatedAudios,
       pendingCandidates: updatedPending,
+      peerConnectionStates: updatedStates,
       activeSpeakers: updatedSpeakers,
       talkingUsers: updatedTalking,
     });
