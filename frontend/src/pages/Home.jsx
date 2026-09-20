@@ -183,10 +183,12 @@ export default function Home() {
                   value={joinInput}
                   onChange={(e) => setJoinInput(e.target.value)}
                   placeholder="Вставьте ссылку или ID комнаты..."
+                  aria-label="Ссылка или ID комнаты"
                   className="w-full bg-transparent text-sm text-white placeholder-gray-500 outline-none px-2 py-2"
                 />
                 <button
                   type="submit"
+                  aria-label="Войти в комнату"
                   className="flex items-center gap-1.5 px-4 py-2.5 bg-accent hover:bg-accent-hover active:scale-95 text-white font-semibold text-xs rounded-xl shadow-md transition-all duration-150 cursor-pointer shrink-0"
                 >
                   <span>Войти</span>

@@ -3,6 +3,7 @@ import { useRoomStore } from '../store/roomStore';
 import { useVoiceStore } from '../store/voiceStore';
 import { Users, Crown, Mic, MicOff, UserX, Check, X, ShieldAlert } from 'lucide-react';
 import VoiceChat, { VoiceEqualizer } from './VoiceChat';
+import { MemberCardSkeleton } from './Skeleton';
 import { cn } from '../utils/cn';
 
 // Helper to extract emoji avatar or first letter
@@ -25,6 +26,7 @@ function parseAvatar(nickname = '') {
 
 export default function Members() {
   const members = useRoomStore(state => state.members);
+  const isJoining = useRoomStore(state => state.isJoining);
   const currentUserId = useRoomStore(state => state.userId);
   const currentNickname = useRoomStore(state => state.nickname);
   const isHost = useRoomStore(state => state.isHost);
@@ -90,8 +92,15 @@ export default function Members() {
         aria-label="Список участников комнаты"
         className="flex-1 overflow-y-auto p-3 space-y-2 select-text"
       >
-        {displayMembers.map(m => {
-          const isMe = String(m.userId) === String(currentUserId);
+        {displayMembers.length === 0 && isJoining ? (
+          <>
+            <MemberCardSkeleton />
+            <MemberCardSkeleton />
+            <MemberCardSkeleton />
+          </>
+        ) : (
+          displayMembers.map(m => {
+            const isMe = String(m.userId) === String(currentUserId);
           const isInCall = (isMe && isInVoice) || roomVoiceUsers.has(String(m.userId)) || roomVoiceUsers.has(m.userId);
           const isTalking = talkingUsers.has(String(m.userId)) || talkingUsers.has(m.userId);
           const { avatar, isEmoji, name } = parseAvatar(m.nickname);
@@ -234,7 +243,8 @@ export default function Members() {
               </div>
             </li>
           );
-        })}
+          })
+        )}
       </ul>
     </div>
   );

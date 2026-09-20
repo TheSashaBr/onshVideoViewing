@@ -6,6 +6,7 @@ import RutubePlayer from './players/RutubePlayer';
 import TwitchPlayer from './players/TwitchPlayer';
 import VKVideoPlayer from './players/VKVideoPlayer';
 import DzenPlayer from './players/DzenPlayer';
+import { PlayerSkeleton } from './Skeleton';
 import {
   Film,
   Play,
@@ -67,6 +68,7 @@ export default function Player() {
   const sendMessage = useRoomStore(state => state.sendMessage);
   const loadVideo = useRoomStore(state => state.loadVideo);
   const isHost = useRoomStore(state => state.isHost);
+  const isJoining = useRoomStore(state => state.isJoining);
 
   const [inputUrl, setInputUrl] = useState('');
   const [error, setError] = useState(null);
@@ -128,7 +130,12 @@ export default function Player() {
 
   const parsedCurrent = parseVideoUrl(roomState.videoUrl);
 
-  // 1. Empty State (Onboarding when no video has been loaded yet)
+  // 1. Loading Skeleton while connecting before state is confirmed
+  if (isJoining && !parsedCurrent) {
+    return <PlayerSkeleton />;
+  }
+
+  // 2. Empty State (Onboarding when no video has been loaded yet)
   if (!parsedCurrent) {
     return (
       <div className="flex flex-col items-center justify-center h-full w-full p-4 sm:p-6 text-center relative overflow-hidden select-none">
@@ -171,6 +178,7 @@ export default function Player() {
               </span>
               <input
                 type="text"
+                aria-label="Ссылка на видео"
                 placeholder="Вставьте ссылку на YouTube, Rutube, Twitch, VK..."
                 value={inputUrl}
                 onChange={(e) => {
@@ -208,6 +216,7 @@ export default function Player() {
             <button
               type="submit"
               disabled={!inputUrl.trim()}
+              aria-label="Запустить видео"
               className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent to-indigo-600 hover:from-accent-hover hover:to-indigo-500 active:scale-[0.98] text-white font-bold py-3 px-4 rounded-xl transition duration-150 shadow-glow-accent text-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <Play className="w-4 h-4 fill-white" />
@@ -238,6 +247,7 @@ export default function Player() {
             onClick={() => setError(null)}
             className="p-1 rounded-md hover:bg-white/20 transition cursor-pointer shrink-0"
             title="Закрыть"
+            aria-label="Закрыть уведомление об ошибке"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -307,6 +317,7 @@ export default function Player() {
           onClick={() => setShowUrlChanger((prev) => !prev)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised/85 hover:bg-surface-hover active:scale-95 text-xs text-gray-200 border border-border-subtle hover:border-accent/40 rounded-full backdrop-blur-md transition shadow-glass cursor-pointer"
           title="Сменить видеоисточник"
+          aria-label="Сменить видеоисточник"
         >
           <Link2 className="w-3.5 h-3.5 text-accent" />
           <span className="font-medium text-[11px] sm:text-xs">Сменить видео</span>
@@ -355,6 +366,7 @@ export default function Player() {
                 onClick={() => setShowUrlChanger(false)}
                 className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/[0.08] transition cursor-pointer"
                 title="Закрыть"
+                aria-label="Закрыть окно смены видео"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -392,6 +404,7 @@ export default function Player() {
                 <input
                   type="text"
                   placeholder="https://..."
+                  aria-label="Новая ссылка на видео"
                   value={inputUrl}
                   onChange={(e) => {
                     setInputUrl(e.target.value);

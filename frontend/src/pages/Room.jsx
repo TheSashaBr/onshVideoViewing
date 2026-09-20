@@ -337,10 +337,17 @@ export default function Room() {
           />
         </div>
 
-        <div className="relative z-10 bg-surface-raised/95 border border-border-subtle p-6 sm:p-8 rounded-3xl shadow-glass-lg w-full max-w-sm backdrop-blur-xl animate-scale-in">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="nickname-modal-title"
+          className="relative z-10 bg-surface-raised/95 border border-border-subtle p-6 sm:p-8 rounded-3xl shadow-glass-lg w-full max-w-sm backdrop-blur-xl animate-scale-in"
+        >
           <div className="text-center mb-6">
             <img src="/onsh-logo.png" alt="onsh" className="h-8 mx-auto mb-3 opacity-90 select-none" />
-            <h2 className="text-xl font-bold text-white mb-1">Войти в комнату</h2>
+            <h2 id="nickname-modal-title" className="text-xl font-bold text-white mb-1">
+              Войти в комнату
+            </h2>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/[0.04] border border-border-subtle text-xs text-gray-400 font-mono">
               <span>комната:</span>
               <span className="text-gray-200 font-semibold">#{roomId?.slice(0, 10)}</span>
@@ -353,11 +360,14 @@ export default function Room() {
               <label className="block text-xs font-semibold text-gray-400 mb-2 text-center">
                 Выберите аватар
               </label>
-              <div className="grid grid-cols-6 gap-2 p-2 bg-surface/80 rounded-2xl border border-border-subtle">
+              <div className="grid grid-cols-6 gap-2 p-2 bg-surface/80 rounded-2xl border border-border-subtle" role="radiogroup" aria-label="Выбор аватара">
                 {AVATARS.map((av) => (
                   <button
                     key={av}
                     type="button"
+                    role="radio"
+                    aria-checked={selectedAvatar === av}
+                    aria-label={`Выбрать аватар ${av}`}
                     onClick={() => setSelectedAvatar(av)}
                     className={`w-9 h-9 text-lg rounded-xl flex items-center justify-center transition-all cursor-pointer ${
                       selectedAvatar === av
@@ -373,19 +383,21 @@ export default function Room() {
 
             {/* Nickname Input */}
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1.5">
+              <label htmlFor="nickname-input" className="block text-xs font-medium text-gray-400 mb-1.5">
                 Ваше имя или никнейм
               </label>
               <div className="relative flex items-center">
-                <span className="absolute left-3.5 text-lg select-none">
+                <span className="absolute left-3.5 text-lg select-none" aria-hidden="true">
                   {selectedAvatar}
                 </span>
                 <input
+                  id="nickname-input"
                   type="text"
                   value={nickname}
                   onChange={(e) => setNickname(e.target.value)}
                   placeholder="Как вас называть?"
                   maxLength={24}
+                  aria-label="Ваше имя или никнейм"
                   className="w-full bg-white/[0.04] border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition"
                   required
                   autoFocus
@@ -515,6 +527,7 @@ export default function Room() {
               {/* Mobile Members Bottom Sheet Trigger */}
               <button
                 onClick={() => setShowMobileMembersSheet(true)}
+                aria-label={`Список участников (${members.length})`}
                 className="md:hidden flex items-center gap-1.5 px-2.5 py-1.5 bg-white/[0.05] hover:bg-white/[0.09] active:scale-95 text-xs font-medium rounded-xl text-gray-200 border border-border-subtle transition cursor-pointer"
                 title="Список участников"
               >
@@ -527,6 +540,7 @@ export default function Room() {
 
               <button
                 onClick={handleShare}
+                aria-label="Поделиться ссылкой на комнату"
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.05] hover:bg-white/[0.09] active:scale-95 text-xs font-medium rounded-xl text-gray-200 border border-border-subtle transition cursor-pointer"
                 title="Поделиться ссылкой"
               >
@@ -545,6 +559,7 @@ export default function Room() {
 
               <button
                 onClick={toggleRotateAndFullscreen}
+                aria-label="Полноэкранный просмотр (Кино)"
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.05] hover:bg-white/[0.09] active:scale-95 text-xs font-medium rounded-xl text-gray-200 border border-border-subtle transition cursor-pointer"
                 title="Полноэкранный просмотр (Кино)"
               >
@@ -554,6 +569,7 @@ export default function Room() {
 
               <button
                 onClick={handleLeaveRoom}
+                aria-label="Выйти из комнаты"
                 className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-red-500/10 active:scale-95 text-xs font-medium rounded-xl text-red-400 hover:text-red-300 border border-transparent hover:border-red-500/20 transition cursor-pointer"
                 title="Выйти из комнаты"
               >
@@ -643,9 +659,10 @@ export default function Room() {
         {!isCinemaMode && (
           <div className="flex flex-col flex-1 min-h-0 md:hidden bg-surface">
             {/* Mobile Tab Selector with sliding active pill */}
-            <div className="relative flex border-b border-border-subtle bg-surface/90 shrink-0 p-1.5 gap-1">
+            <div role="tablist" aria-label="Вкладки комнаты" className="relative flex border-b border-border-subtle bg-surface/90 shrink-0 p-1.5 gap-1">
               {/* Sliding active pill indicator */}
               <div
+                aria-hidden="true"
                 className="absolute top-1.5 bottom-1.5 rounded-xl bg-accent/20 border border-accent/40 shadow-sm transition-all duration-300 ease-out pointer-events-none"
                 style={{
                   left: activeTab === 'chat' ? '6px' : 'calc(50% + 2px)',
@@ -654,6 +671,10 @@ export default function Room() {
               />
 
               <button
+                role="tab"
+                id="mobile-tab-chat"
+                aria-controls="mobile-tabpanel-chat"
+                aria-selected={activeTab === 'chat'}
                 onClick={() => handleSelectTab('chat')}
                 className={`relative z-10 flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer ${
                   activeTab === 'chat'
@@ -669,6 +690,10 @@ export default function Room() {
               </button>
 
               <button
+                role="tab"
+                id="mobile-tab-members"
+                aria-controls="mobile-tabpanel-members"
+                aria-selected={activeTab === 'members'}
                 onClick={() => handleSelectTab('members')}
                 className={`relative z-10 flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer ${
                   activeTab === 'members'
@@ -699,10 +724,10 @@ export default function Room() {
                   transform: activeTab === 'chat' ? 'translateX(0%)' : 'translateX(-50%)',
                 }}
               >
-                <div className="w-1/2 h-full min-h-0 flex flex-col">
+                <div role="tabpanel" id="mobile-tabpanel-chat" aria-labelledby="mobile-tab-chat" className="w-1/2 h-full min-h-0 flex flex-col">
                   <Chat />
                 </div>
-                <div className="w-1/2 h-full min-h-0 flex flex-col">
+                <div role="tabpanel" id="mobile-tabpanel-members" aria-labelledby="mobile-tab-members" className="w-1/2 h-full min-h-0 flex flex-col">
                   <Members />
                 </div>
               </div>
@@ -715,8 +740,12 @@ export default function Room() {
       {!isCinemaMode && (
         <aside className="hidden md:flex w-80 lg:w-96 bg-surface-raised border-l border-border-subtle flex-col shrink-0 h-full">
           {/* Sidebar Tab Selector */}
-          <div className="p-2 border-b border-border-subtle flex items-center gap-1.5 bg-surface/60 shrink-0">
+          <div role="tablist" aria-label="Вкладки сайдбара" className="p-2 border-b border-border-subtle flex items-center gap-1.5 bg-surface/60 shrink-0">
             <button
+              role="tab"
+              id="desktop-tab-chat"
+              aria-controls="desktop-tabpanel-content"
+              aria-selected={activeTab === 'chat'}
               onClick={() => handleSelectTab('chat')}
               className={`flex-1 py-2 px-3 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 activeTab === 'chat'
@@ -732,6 +761,10 @@ export default function Room() {
             </button>
 
             <button
+              role="tab"
+              id="desktop-tab-members"
+              aria-controls="desktop-tabpanel-content"
+              aria-selected={activeTab === 'members'}
               onClick={() => handleSelectTab('members')}
               className={`flex-1 py-2 px-3 text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 activeTab === 'members'
@@ -754,7 +787,12 @@ export default function Room() {
           </div>
 
           {/* Sidebar Tab Content */}
-          <div className="flex-1 overflow-hidden flex flex-col">
+          <div
+            role="tabpanel"
+            id="desktop-tabpanel-content"
+            aria-labelledby={`desktop-tab-${activeTab}`}
+            className="flex-1 overflow-hidden flex flex-col"
+          >
             {activeTab === 'chat' ? <Chat /> : <Members />}
           </div>
         </aside>
@@ -762,7 +800,12 @@ export default function Room() {
 
       {/* Mobile Bottom Sheet for Members */}
       {showMobileMembersSheet && (
-        <div className="fixed inset-0 z-50 md:hidden flex flex-col justify-end">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mobile-members-sheet-title"
+          className="fixed inset-0 z-50 md:hidden flex flex-col justify-end"
+        >
           {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
@@ -781,13 +824,16 @@ export default function Room() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-accent" />
-                  <span className="font-bold text-sm text-white">Участники комнаты</span>
+                  <span id="mobile-members-sheet-title" className="font-bold text-sm text-white">
+                    Участники комнаты
+                  </span>
                   <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-accent/20 text-accent border border-accent/30">
                     {members.length}
                   </span>
                 </div>
                 <button
                   onClick={() => setShowMobileMembersSheet(false)}
+                  aria-label="Закрыть список участников"
                   className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/[0.08] transition cursor-pointer"
                   title="Закрыть"
                 >

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRoomStore } from '../store/roomStore';
 import { Send, Smile, ChevronDown, MessageSquare, X } from 'lucide-react';
+import { ChatMessageSkeleton } from './Skeleton';
 
 const QUICK_EMOJIS = ['🍿', '🔥', '😂', '❤️', '👍', '😮', '👏', '🎬'];
 
@@ -51,6 +52,7 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
   const [unreadCount, setUnreadCount] = useState(0);
 
   const messages = useRoomStore(state => state.chatMessages);
+  const isJoining = useRoomStore(state => state.isJoining);
   const sendChat = useRoomStore(state => state.sendChat);
   const sendTyping = useRoomStore(state => state.sendTyping);
   const typingUsers = useRoomStore(state => state.typingUsers);
@@ -204,18 +206,30 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
       <div
         ref={listContainerRef}
         onScroll={handleScroll}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-label="Сообщения чата"
         className="flex-1 overflow-y-auto p-3.5 space-y-2 select-text"
       >
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center py-10 text-gray-500">
-            <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-border-subtle flex items-center justify-center mb-3">
-              <MessageSquare className="w-6 h-6 text-accent/60" />
+          isJoining ? (
+            <div className="space-y-3 py-2 animate-fade-in" aria-label="Загрузка сообщений...">
+              <ChatMessageSkeleton isSelf={false} />
+              <ChatMessageSkeleton isSelf={true} />
+              <ChatMessageSkeleton isSelf={false} />
             </div>
-            <p className="text-xs font-semibold text-gray-300 mb-1">Здесь пока тихо</p>
-            <p className="text-[11px] text-gray-500 max-w-[200px]">
-              Начните обсуждение фильма или отправьте реакцию
-            </p>
-          </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center py-10 text-gray-500">
+              <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-border-subtle flex items-center justify-center mb-3">
+                <MessageSquare className="w-6 h-6 text-accent/60" />
+              </div>
+              <p className="text-xs font-semibold text-gray-300 mb-1">Здесь пока тихо</p>
+              <p className="text-[11px] text-gray-500 max-w-[200px]">
+                Начните обсуждение фильма или отправьте реакцию
+              </p>
+            </div>
+          )
         ) : (
           messages.map((msg, i) => {
             const isMe =
@@ -332,6 +346,7 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
               key={emoji}
               type="button"
               onClick={() => handleQuickEmoji(emoji)}
+              aria-label={`Отправить эмодзи ${emoji}`}
               className="w-8 h-8 rounded-xl flex items-center justify-center hover:bg-white/[0.08] hover:scale-115 active:scale-90 transition text-base cursor-pointer"
             >
               {emoji}
@@ -349,6 +364,8 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
         <button
           type="button"
           onClick={() => setShowEmojiPicker((prev) => !prev)}
+          aria-label={showEmojiPicker ? 'Закрыть панель эмодзи' : 'Открыть быстрые эмодзи'}
+          aria-expanded={showEmojiPicker}
           className={`p-2 rounded-xl transition cursor-pointer shrink-0 active:scale-95 ${
             showEmojiPicker
               ? 'bg-accent/20 text-accent border border-accent/30'
@@ -364,6 +381,7 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
           value={text}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
+          aria-label="Ввести сообщение в чат"
           placeholder="Написать в чат..."
           maxLength={500}
           className="flex-1 bg-white/[0.04] hover:bg-white/[0.07] focus:bg-white/[0.06] border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl px-3.5 py-2 text-sm text-white placeholder-gray-500 outline-none transition"

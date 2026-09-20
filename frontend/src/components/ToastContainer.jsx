@@ -13,7 +13,8 @@ export default function ToastContainer() {
 
   const addToast = useCallback((message, type = 'info', duration = 3000) => {
     const id = ++idRef.current;
-    setToasts(prev => [...prev.slice(-4), { id, message, type, duration }]);
+    // Show up to 4 toasts stacked neatly
+    setToasts(prev => [...prev.slice(-3), { id, message, type, duration }]);
   }, []);
 
   useEffect(() => {
@@ -26,7 +27,11 @@ export default function ToastContainer() {
   }, []);
 
   return (
-    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center gap-2 pointer-events-none">
+    <div
+      aria-live="polite"
+      aria-label="Уведомления"
+      className="fixed top-3 sm:top-4 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center gap-2.5 w-full max-w-sm sm:max-w-md px-3 pointer-events-none pt-safe"
+    >
       {toasts.map(t => (
         <Toast
           key={t.id}
