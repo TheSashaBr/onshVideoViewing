@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import YouTube from 'react-youtube';
 import { useRoomStore } from '../../store/roomStore';
 
@@ -85,6 +85,8 @@ export default function YouTubePlayer({
     }
   }, [lastRemoteAction]);
 
+  const [useFallback, setUseFallback] = useState(false);
+
   const handleReady = (e) => {
     playerRef.current = e.target;
     isInitialReady.current = true;
@@ -97,12 +99,14 @@ export default function YouTubePlayer({
     }
     lastKnownPlayerTime.current = expectedTime;
     if (expectedTime > 0) {
-      e.target.seekTo(expectedTime, true);
+      try {
+        e.target.seekTo(expectedTime, true);
+      } catch (err) {}
     }
     if (roomState.isPlaying) {
-      e.target.playVideo();
-    } else {
-      e.target.pauseVideo();
+      try {
+        e.target.playVideo();
+      } catch (err) {}
     }
   };
 
@@ -110,18 +114,22 @@ export default function YouTubePlayer({
     if (Date.now() < ignoreEventsUntil.current) {
       return;
     }
-    const currentTime = await e.target.getCurrentTime();
-    lastKnownPlayerTime.current = currentTime;
-    onPlay?.(currentTime);
+    try {
+      const currentTime = await e.target.getCurrentTime();
+      lastKnownPlayerTime.current = currentTime;
+      onPlay?.(currentTime);
+    } catch (err) {}
   };
 
   const handlePause = async (e) => {
     if (Date.now() < ignoreEventsUntil.current) {
       return;
     }
-    const currentTime = await e.target.getCurrentTime();
-    lastKnownPlayerTime.current = currentTime;
-    onPause?.(currentTime);
+    try {
+      const currentTime = await e.target.getCurrentTime();
+      lastKnownPlayerTime.current = currentTime;
+      onPause?.(currentTime);
+    } catch (err) {}
   };
 
   // User seek detection: track significant time jumps during user interaction
@@ -159,9 +167,15 @@ export default function YouTubePlayer({
   }, [onSeek]);
 
   const handleError = (e) => {
-    console.error('YouTube player error:', e);
+    console.warn('YouTube player error:', e);
+    // If the API player fails with code 150/101 (embed restricted by origin check), try direct iframe fallback first
+    if (!useFallback) {
+      setUseFallback(true);
+      return;
+    }
+
     const errorCode = e?.data;
-    let message = 'Не удалось загрузить видео YouTube. Возможно, автор запретил встраивание.';
+    let message = 'Не удалось загрузить видео YouTube.';
     if (errorCode === 101 || errorCode === 150) {
       message = 'Это видео запрещено к просмотру на сторонних сайтах его автором.';
     } else if (errorCode === 100) {
@@ -172,20 +186,35 @@ export default function YouTubePlayer({
     onError?.(message);
   };
 
+  if (useFallback) {
+    return (
+      <div className="w-full h-full relative bg-black">
+        <iframe
+          src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1`}
+          title="YouTube Video"
+          className="w-full h-full absolute inset-0 border-0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="w-full h-full relative">
+    <div className="w-full h-full relative bg-black">
       <YouTube
+        key={videoId}
         videoId={videoId}
         opts={{
           width: '100%',
           height: '100%',
+          host: 'https://www.youtube-nocookie.com',
           playerVars: {
             autoplay: 1,
             modestbranding: 1,
             rel: 0,
             playsinline: 1,
             enablejsapi: 1,
-            origin: window.location.origin,
           },
         }}
         onReady={handleReady}

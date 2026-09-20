@@ -257,6 +257,7 @@ export default function Player() {
       {/* Render subplayer according to platform */}
       {parsedCurrent.platform === 'youtube' && (
         <YouTubePlayer
+          key={`yt-${parsedCurrent.id}`}
           videoId={parsedCurrent.id}
           roomState={roomState}
           onPlay={handlePlay}
@@ -268,6 +269,7 @@ export default function Player() {
 
       {parsedCurrent.platform === 'rutube' && (
         <RutubePlayer
+          key={`rutube-${parsedCurrent.id}`}
           videoId={parsedCurrent.id}
           roomState={roomState}
           onPlay={handlePlay}
@@ -279,6 +281,7 @@ export default function Player() {
 
       {parsedCurrent.platform === 'twitch' && (
         <TwitchPlayer
+          key={`twitch-${parsedCurrent.id}`}
           videoId={parsedCurrent.id}
           twitchType={parsedCurrent.twitchType || 'channel'}
           roomState={roomState}
@@ -291,6 +294,7 @@ export default function Player() {
 
       {parsedCurrent.platform === 'vkvideo' && (
         <VKVideoPlayer
+          key={`vk-${parsedCurrent.id}`}
           videoId={parsedCurrent.id}
           roomState={roomState}
           onPlay={handlePlay}
@@ -302,6 +306,7 @@ export default function Player() {
 
       {parsedCurrent.platform === 'dzen' && (
         <DzenPlayer
+          key={`dzen-${parsedCurrent.id}`}
           videoId={parsedCurrent.id}
           roomState={roomState}
           onPlay={handlePlay}

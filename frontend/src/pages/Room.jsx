@@ -139,29 +139,6 @@ export default function Room() {
     }
   };
 
-  // Touch gesture handling for mobile tab swiping between Chat and Members
-  const touchStartX = useRef(0);
-  const touchStartY = useRef(0);
-
-  const handleTouchStart = (e) => {
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
-  };
-
-  const handleTouchEnd = (e) => {
-    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
-    const deltaY = e.changedTouches[0].clientY - touchStartY.current;
-
-    // Trigger horizontal swipe only when predominantly horizontal and delta > 45px
-    if (Math.abs(deltaX) > Math.abs(deltaY) * 1.3 && Math.abs(deltaX) > 45) {
-      if (deltaX < 0 && activeTab === 'chat') {
-        handleSelectTab('members');
-      } else if (deltaX > 0 && activeTab === 'members') {
-        handleSelectTab('chat');
-      }
-    }
-  };
-
   // Touch gesture handling for dismissing mobile members bottom sheet
   const sheetTouchStartY = useRef(0);
 
@@ -476,8 +453,8 @@ export default function Room() {
 
       {/* Main Video Section */}
       <div
-        className={`flex flex-col min-w-0 transition-all duration-300 ${
-          isCinemaMode ? 'w-full h-full' : 'w-full md:flex-1 h-auto md:h-full'
+        className={`flex flex-col min-w-0 h-full overflow-hidden transition-all duration-300 ${
+          isCinemaMode ? 'w-full' : 'w-full md:flex-1'
         }`}
       >
         {/* Header: visible on desktop, or in mobile portrait when not in cinema mode */}
@@ -712,24 +689,31 @@ export default function Room() {
               </button>
             </div>
 
-            {/* Swipeable Tab Content with smooth horizontal slide */}
-            <div
-              className="flex-1 min-h-0 overflow-hidden relative"
-              onTouchStart={handleTouchStart}
-              onTouchEnd={handleTouchEnd}
-            >
+            {/* Tab Content: Fixed, rock-solid panels */}
+            <div className="flex-1 min-h-0 relative overflow-hidden">
               <div
-                className="flex h-full w-[200%] transition-transform duration-300 ease-out"
-                style={{
-                  transform: activeTab === 'chat' ? 'translateX(0%)' : 'translateX(-50%)',
-                }}
+                role="tabpanel"
+                id="mobile-tabpanel-chat"
+                aria-labelledby="mobile-tab-chat"
+                className={`absolute inset-0 flex flex-col ${
+                  activeTab === 'chat'
+                    ? 'visible z-10 pointer-events-auto'
+                    : 'invisible z-0 pointer-events-none'
+                }`}
               >
-                <div role="tabpanel" id="mobile-tabpanel-chat" aria-labelledby="mobile-tab-chat" className="w-1/2 h-full min-h-0 flex flex-col">
-                  <Chat />
-                </div>
-                <div role="tabpanel" id="mobile-tabpanel-members" aria-labelledby="mobile-tab-members" className="w-1/2 h-full min-h-0 flex flex-col">
-                  <Members />
-                </div>
+                <Chat />
+              </div>
+              <div
+                role="tabpanel"
+                id="mobile-tabpanel-members"
+                aria-labelledby="mobile-tab-members"
+                className={`absolute inset-0 flex flex-col ${
+                  activeTab === 'members'
+                    ? 'visible z-10 pointer-events-auto'
+                    : 'invisible z-0 pointer-events-none'
+                }`}
+              >
+                <Members />
               </div>
             </div>
           </div>

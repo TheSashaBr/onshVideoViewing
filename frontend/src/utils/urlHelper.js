@@ -7,7 +7,45 @@ export function parseVideoUrl(url) {
   const trimmed = url.trim();
 
   // 1. Check YouTube
-  const ytRegex = /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/;
+  // Handles:
+  // - youtube.com/watch?v=ID (with any query params in any order)
+  // - youtu.be/ID
+  // - youtube.com/embed/ID
+  // - youtube.com/shorts/ID
+  // - youtube.com/live/ID
+  // - youtube.com/v/ID
+  // - m.youtube.com/...
+  // - youtube-nocookie.com/...
+  // - Raw 11-char ID
+  try {
+    const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+    const host = urlObj.hostname.replace(/^(www\.|m\.)/, '').toLowerCase();
+
+    if (host === 'youtu.be') {
+      const id = urlObj.pathname.slice(1).split('/')[0].split('?')[0];
+      if (/^[\w-]{11}$/.test(id)) {
+        return { platform: 'youtube', id, url: trimmed };
+      }
+    }
+
+    if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+      const v = urlObj.searchParams.get('v');
+      if (v && /^[\w-]{11}$/.test(v)) {
+        return { platform: 'youtube', id: v, url: trimmed };
+      }
+
+      const parts = urlObj.pathname.split('/').filter(Boolean);
+      if (['embed', 'shorts', 'live', 'v'].includes(parts[0]) && parts[1]) {
+        const id = parts[1].split('?')[0];
+        if (/^[\w-]{11}$/.test(id)) {
+          return { platform: 'youtube', id, url: trimmed };
+        }
+      }
+    }
+  } catch (e) {}
+
+  // Regex fallback for YouTube
+  const ytRegex = /(?:youtu\.be\/|(?:www\.|m\.)?youtube(?:-nocookie)?\.com\/(?:embed\/|v\/|watch\?.*v=|shorts\/|live\/))([\w-]{11})/;
   const ytMatch = trimmed.match(ytRegex);
   if (ytMatch && ytMatch[1]) {
     return {
