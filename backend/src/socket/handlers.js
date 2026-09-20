@@ -52,6 +52,38 @@ async function getLiveRoomMembers(io, roomId) {
   return liveMembers;
 }
 
+// Helper to broadcast and return verified active voice participants
+async function broadcastVoiceUsers(io, roomId) {
+  if (!roomId) return [];
+  const socketRoom = io.sockets.adapter.rooms.get(roomId);
+  const activeVoiceUserIds = new Set();
+
+  if (socketRoom) {
+    for (const sId of socketRoom) {
+      const s = io.sockets.sockets.get(sId);
+      if (s && s.userId && s.isVoiceActive) {
+        activeVoiceUserIds.add(String(s.userId));
+      }
+    }
+  }
+
+  try {
+    const redisVoiceUsers = await getVoiceUsers(roomId);
+    if (Array.isArray(redisVoiceUsers)) {
+      redisVoiceUsers.forEach(uid => {
+        if (uid) activeVoiceUserIds.add(String(uid));
+      });
+    }
+  } catch (err) {
+    console.error('[WEBRTC] Error reading voice users from Redis:', err);
+  }
+
+  const voiceUsersList = Array.from(activeVoiceUserIds);
+  console.log(`[WEBRTC] Room ${roomId} active voice users (${voiceUsersList.length}):`, voiceUsersList);
+  io.to(roomId).emit('webrtc_voice_users_list', { users: voiceUsersList });
+  return voiceUsersList;
+}
+
 function setupHandlers(io, socket) {
   // Simple per-socket message throttle
   let lastMessageTime = 0;
@@ -133,10 +165,9 @@ function setupHandlers(io, socket) {
     }
 
     try {
-      const voiceUsers = await getVoiceUsers(roomId);
-      socket.emit('webrtc_voice_users_list', { users: voiceUsers || [] });
+      await broadcastVoiceUsers(io, roomId);
     } catch (e) {
-      console.error('Error fetching voice users on join:', e);
+      console.error('Error broadcasting voice users on join:', e);
     }
   });
 
@@ -242,66 +273,81 @@ function setupHandlers(io, socket) {
   });
 
   // --- WebRTC Voice Call Signaling ---
-  socket.on('webrtc_signal', ({ targetUserId, signal }) => {
-    if (!socket.roomId || !socket.userId) return;
+  socket.on('webrtc_signal', (payload = {}) => {
+    const targetRoomId = payload.roomId || socket.roomId;
+    const senderUserId = payload.senderUserId || socket.userId;
+    const { targetUserId, signal } = payload;
+    if (!targetRoomId || !targetUserId || !signal || !senderUserId) return;
+
     // Relay signaling offer/answer/candidate to specific target peer in the room
-    io.to(socket.roomId).emit('webrtc_signal_relay', {
-      senderUserId: String(socket.userId),
+    io.to(targetRoomId).emit('webrtc_signal_relay', {
+      senderUserId: String(senderUserId),
       targetUserId: String(targetUserId),
       signal
     });
   });
 
-  socket.on('webrtc_join_voice', async () => {
-    if (!socket.roomId || !socket.userId) return;
+  socket.on('webrtc_join_voice', async (payload = {}) => {
+    const roomId = payload.roomId || socket.roomId;
+    const userId = payload.userId || socket.userId;
+    const nickname = payload.nickname || socket.nickname;
+
+    if (!roomId || !userId) {
+      console.warn(`[WEBRTC] webrtc_join_voice missing roomId (${roomId}) or userId (${userId}) on socket ${socket.id}`);
+      return;
+    }
+
+    socket.roomId = roomId;
+    socket.userId = String(userId);
+    if (nickname) socket.nickname = nickname;
+    socket.join(roomId);
     socket.isVoiceActive = true;
-    
+
     try {
-      await addVoiceUser(socket.roomId, socket.userId);
-      const voiceUsers = await getVoiceUsers(socket.roomId);
-
-      // Broadcast the complete active voice list to EVERYONE in the room
-      io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
-
-      // Notify other peers in room so they can send offers to the newcomer
-      socket.to(socket.roomId).emit('webrtc_peer_joined_voice', {
-        userId: String(socket.userId),
-        nickname: socket.nickname
-      });
-
-      // Return other voice peers to newcomer
-      const otherPeers = voiceUsers
-        .filter(uid => String(uid) !== String(socket.userId))
-        .map(uid => ({ userId: String(uid) }));
-      socket.emit('webrtc_existing_voice_peers', { users: otherPeers });
+      await addVoiceUser(roomId, userId);
     } catch (err) {
-      console.error('Error in webrtc_join_voice:', err);
+      console.error('[WEBRTC] Redis error in addVoiceUser:', err);
     }
+
+    const voiceUsers = await broadcastVoiceUsers(io, roomId);
+
+    // Notify other peers in room so they can send offers to the newcomer
+    socket.to(roomId).emit('webrtc_peer_joined_voice', {
+      userId: String(userId),
+      nickname: socket.nickname || nickname || 'Участник'
+    });
+
+    // Return other voice peers to newcomer
+    const otherPeers = voiceUsers
+      .filter(uid => String(uid) !== String(userId))
+      .map(uid => ({ userId: String(uid) }));
+    socket.emit('webrtc_existing_voice_peers', { users: otherPeers });
   });
 
-  socket.on('webrtc_get_voice_users', async () => {
-    if (!socket.roomId) return;
-    try {
-      const voiceUsers = await getVoiceUsers(socket.roomId);
-      socket.emit('webrtc_voice_users_list', { users: voiceUsers });
-    } catch (err) {
-      console.error('Error in webrtc_get_voice_users:', err);
-    }
+  socket.on('webrtc_get_voice_users', async (payload = {}) => {
+    const roomId = payload.roomId || socket.roomId;
+    if (!roomId) return;
+    socket.roomId = roomId;
+    socket.join(roomId);
+    await broadcastVoiceUsers(io, roomId);
   });
 
-  socket.on('webrtc_leave_voice', async () => {
-    if (!socket.roomId || !socket.userId) return;
+  socket.on('webrtc_leave_voice', async (payload = {}) => {
+    const roomId = payload.roomId || socket.roomId;
+    const userId = payload.userId || socket.userId;
+    if (!roomId || !userId) return;
+
     socket.isVoiceActive = false;
     try {
-      await removeVoiceUser(socket.roomId, socket.userId);
-      const voiceUsers = await getVoiceUsers(socket.roomId);
-      io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
-      io.to(socket.roomId).emit('webrtc_peer_left_voice', {
-        userId: String(socket.userId)
-      });
+      await removeVoiceUser(roomId, userId);
     } catch (err) {
-      console.error('Error in webrtc_leave_voice:', err);
+      console.error('[WEBRTC] Redis error in removeVoiceUser:', err);
     }
+
+    await broadcastVoiceUsers(io, roomId);
+    io.to(roomId).emit('webrtc_peer_left_voice', {
+      userId: String(userId)
+    });
   });
 
   // Host moderation: Kick participant from room
@@ -319,6 +365,7 @@ function setupHandlers(io, socket) {
           if (s.isVoiceActive) {
             s.isVoiceActive = false;
             await removeVoiceUser(socket.roomId, targetUserId).catch(() => {});
+            await broadcastVoiceUsers(io, socket.roomId);
             io.to(socket.roomId).emit('webrtc_peer_left_voice', { userId: String(targetUserId) });
           }
         }
@@ -339,8 +386,7 @@ function setupHandlers(io, socket) {
       }
     });
 
-    const voiceUsers = await getVoiceUsers(socket.roomId).catch(() => []);
-    io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
+    await broadcastVoiceUsers(io, socket.roomId);
   });
 
   // Host moderation: Mute participant in voice call
@@ -393,12 +439,11 @@ function setupHandlers(io, socket) {
           socket.isVoiceActive = false;
           try {
             await removeVoiceUser(socket.roomId, socket.userId);
-            const voiceUsers = await getVoiceUsers(socket.roomId);
-            io.to(socket.roomId).emit('webrtc_voice_users_list', { users: voiceUsers });
-            io.to(socket.roomId).emit('webrtc_peer_left_voice', {
-              userId: String(socket.userId)
-            });
           } catch (e) {}
+          await broadcastVoiceUsers(io, socket.roomId);
+          io.to(socket.roomId).emit('webrtc_peer_left_voice', {
+            userId: String(socket.userId)
+          });
         }
 
         await removeMember(socket.roomId, socket.userId);

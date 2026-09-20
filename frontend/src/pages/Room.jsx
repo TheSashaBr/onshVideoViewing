@@ -80,10 +80,10 @@ export default function Room() {
 
   // Initialize room-wide voice listeners when socket connects to room
   useEffect(() => {
-    if (socket && hasJoinedRoom) {
-      useVoiceStore.getState().initVoiceRoomListeners(socket);
+    if (socket && hasJoinedRoom && roomId) {
+      useVoiceStore.getState().initVoiceRoomListeners(socket, roomId);
     }
-  }, [socket, hasJoinedRoom]);
+  }, [socket, hasJoinedRoom, roomId]);
 
   // Track screen orientation & window dimensions
   useEffect(() => {

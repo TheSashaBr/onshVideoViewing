@@ -32,7 +32,7 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
   const members = useRoomStore(state => state.members);
   const currentUserId = useRoomStore(state => state.userId);
 
-  const voiceCount = roomVoiceUsers.size;
+  const voiceCount = Math.max(roomVoiceUsers.size, isInVoice ? 1 : 0);
   const isMeSpeaking = currentUserId && (talkingUsers.has(currentUserId) || talkingUsers.has(String(currentUserId)));
 
   // Extract avatar character or emoji
@@ -107,6 +107,32 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
         voiceMembersMap.set(String(m.userId), m);
       }
     });
+
+    // Ensure all users in roomVoiceUsers are displayed, even if members list is still updating
+    roomVoiceUsers.forEach(uid => {
+      const uidStr = String(uid);
+      if (!voiceMembersMap.has(uidStr)) {
+        const found = members.find(m => String(m.userId) === uidStr);
+        if (found) {
+          voiceMembersMap.set(uidStr, found);
+        } else if (uidStr === String(currentUserId)) {
+          voiceMembersMap.set(uidStr, {
+            userId: uidStr,
+            nickname: useRoomStore.getState().nickname || 'Вы',
+            isHost: useRoomStore.getState().isHost,
+            joinedAt: Date.now()
+          });
+        } else {
+          voiceMembersMap.set(uidStr, {
+            userId: uidStr,
+            nickname: 'Участник',
+            isHost: false,
+            joinedAt: Date.now()
+          });
+        }
+      }
+    });
+
     if (isInVoice && currentUserId && !voiceMembersMap.has(String(currentUserId))) {
       voiceMembersMap.set(String(currentUserId), {
         userId: currentUserId,

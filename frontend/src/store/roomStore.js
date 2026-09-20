@@ -55,7 +55,7 @@ export const useRoomStore = create((set, get) => ({
     });
 
     // Immediately bind room voice listeners on the socket so no voice events are missed
-    useVoiceStore.getState().initVoiceRoomListeners(socket);
+    useVoiceStore.getState().initVoiceRoomListeners(socket, roomId);
     
     socket.emit('join_room', { roomId, userId, nickname, isHost });
 
@@ -80,7 +80,13 @@ export const useRoomStore = create((set, get) => ({
         });
         // If user is currently in voice, restore voice presence on server
         if (useVoiceStore.getState().isInVoice) {
-          socket.emit('webrtc_join_voice');
+          socket.emit('webrtc_join_voice', {
+            roomId: currentRoom,
+            userId: currentUid,
+            nickname: currentNick
+          });
+        } else {
+          socket.emit('webrtc_get_voice_users', { roomId: currentRoom });
         }
       }
     });

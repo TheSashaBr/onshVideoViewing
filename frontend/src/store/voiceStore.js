@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { useRoomStore } from './roomStore';
 import { showToast } from '../components/ToastContainer';
 
-// High-reliability public STUN servers for NAT traversal (no expiring/flaky TURN servers)
+// High-reliability public STUN & TURN servers for NAT traversal
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -13,6 +13,21 @@ const ICE_SERVERS = {
     { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:global.stun.twilio.com:3478' },
     { urls: 'stun:stun.services.mozilla.com' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelay',
+      credential: 'openrelay',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelay',
+      credential: 'openrelay',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelay',
+      credential: 'openrelay',
+    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -33,13 +48,15 @@ export const useVoiceStore = create((set, get) => ({
   pendingCandidates: {}, // { [userId]: RTCIceCandidateInit[] }
 
   // Global room listener initialized on room join (works even before user clicks join voice)
-  initVoiceRoomListeners: (socket) => {
+  initVoiceRoomListeners: (socket, roomId) => {
     if (!socket) return;
+    const currentRoomId = roomId || useRoomStore.getState().roomId;
 
     socket.off('webrtc_voice_users_list');
     socket.off('webrtc_peer_left_voice');
 
     socket.on('webrtc_voice_users_list', ({ users }) => {
+      console.log('[WEBRTC] Received webrtc_voice_users_list:', users);
       if (Array.isArray(users)) {
         const userSet = new Set(users.map(u => String(u)));
         // If current user is locally in voice, preserve local presence
@@ -76,7 +93,21 @@ export const useVoiceStore = create((set, get) => ({
     window.removeEventListener('onsh_host_muted', handleHostMute);
     window.addEventListener('onsh_host_muted', handleHostMute);
 
-    socket.emit('webrtc_get_voice_users');
+    // Auto re-query on tab focus / visibility
+    const handleVisibility = () => {
+      if (!document.hidden && socket.connected) {
+        const activeRoom = useRoomStore.getState().roomId || currentRoomId;
+        if (activeRoom) {
+          socket.emit('webrtc_get_voice_users', { roomId: activeRoom });
+        }
+      }
+    };
+    document.removeEventListener('visibilitychange', handleVisibility);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    if (currentRoomId && socket.connected) {
+      socket.emit('webrtc_get_voice_users', { roomId: currentRoomId });
+    }
   },
 
   joinVoice: async () => {
@@ -87,6 +118,14 @@ export const useVoiceStore = create((set, get) => ({
       if (!navigator?.mediaDevices?.getUserMedia) {
         throw new Error('Голосовой чат требует безопасного соединения (HTTPS)');
       }
+
+      // Pre-unlock audio element for iOS Safari autoplay compatibility
+      try {
+        const dummyAudio = document.createElement('audio');
+        dummyAudio.setAttribute('playsinline', '');
+        dummyAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+        dummyAudio.play().catch(() => {});
+      } catch (e) {}
 
       // 1. Initialize or resume shared AudioContext on user gesture
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -119,6 +158,8 @@ export const useVoiceStore = create((set, get) => ({
 
       const socket = useRoomStore.getState().socket;
       const myUserId = String(useRoomStore.getState().userId);
+      const roomId = useRoomStore.getState().roomId;
+      const nickname = useRoomStore.getState().nickname;
 
       if (!socket || !socket.connected) {
         throw new Error('Нет подключения к серверу комнаты');
@@ -127,8 +168,8 @@ export const useVoiceStore = create((set, get) => ({
       // 3. Setup WebRTC signaling socket handlers
       get().setupSignaling(socket, myUserId, stream);
 
-      // 4. Notify server that we joined voice
-      socket.emit('webrtc_join_voice');
+      // 4. Notify server that we joined voice with explicit payload
+      socket.emit('webrtc_join_voice', { roomId, userId: myUserId, nickname });
 
       const roomVoiceUsers = new Set(get().roomVoiceUsers);
       roomVoiceUsers.add(myUserId);
@@ -164,9 +205,10 @@ export const useVoiceStore = create((set, get) => ({
     const { localStream, peerConnections, remoteAudioElements, sharedAudioContext } = get();
     const socket = useRoomStore.getState().socket;
     const myUserId = String(useRoomStore.getState().userId || '');
+    const roomId = useRoomStore.getState().roomId;
 
-    if (socket && socket.connected) {
-      socket.emit('webrtc_leave_voice');
+    if (socket && socket.connected && roomId) {
+      socket.emit('webrtc_leave_voice', { roomId, userId: myUserId });
     }
 
     // Stop all microphone tracks
@@ -239,22 +281,25 @@ export const useVoiceStore = create((set, get) => ({
       const currentSpeakers = new Set(get().activeSpeakers);
       const currentRoomVoice = new Set(get().roomVoiceUsers);
 
-      users.forEach(u => {
+      for (const u of users) {
         if (u && u.userId) {
           const uid = String(u.userId);
+          if (uid === String(myUserId)) continue;
           currentSpeakers.add(uid);
           currentRoomVoice.add(uid);
-        }
-      });
-      set({ activeSpeakers: currentSpeakers, roomVoiceUsers: currentRoomVoice });
 
-      // NOTE: Strict one-way negotiation. As newcomer, we do NOT initiate offers to existing peers.
-      // The existing peers receive 'webrtc_peer_joined_voice' and send the offer to us.
-      // We will answer their offers when received in 'webrtc_signal_relay'.
-      // This completely eliminates WebRTC glare and negotiation collisions.
+          // Deterministic initiator: the peer with higher string ID initiates offer
+          const isInitiator = String(myUserId) > uid;
+          const activeStream = stream || get().localStream;
+          if (isInitiator && activeStream && get().isInVoice) {
+            await get().createPeerConnection(uid, true, activeStream);
+          }
+        }
+      }
+      set({ activeSpeakers: currentSpeakers, roomVoiceUsers: currentRoomVoice });
     });
 
-    // When a new peer joins voice, existing peers initiate the connection and send the offer
+    // When a new peer joins voice
     socket.on('webrtc_peer_joined_voice', async ({ userId: rawPeerId, nickname }) => {
       const peerId = String(rawPeerId);
       if (!peerId || peerId === String(myUserId)) return;
@@ -269,9 +314,10 @@ export const useVoiceStore = create((set, get) => ({
         showToast(`${nickname} подключился к голосовому чату`, 'info');
       }
 
-      // Existing peer initiates peer connection with isInitiator = true
+      // Deterministic initiator: the peer with higher string ID initiates offer
+      const isInitiator = String(myUserId) > peerId;
       const activeStream = stream || get().localStream;
-      if (activeStream && get().isInVoice) {
+      if (isInitiator && activeStream && get().isInVoice) {
         await get().createPeerConnection(peerId, true, activeStream);
       }
     });
@@ -335,7 +381,10 @@ export const useVoiceStore = create((set, get) => ({
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
+          const rId = useRoomStore.getState().roomId;
           socket.emit('webrtc_signal', {
+            roomId: rId,
+            senderUserId: String(myUserId),
             targetUserId: senderUserId,
             signal: answer,
           });
@@ -393,7 +442,11 @@ export const useVoiceStore = create((set, get) => ({
     // Send local ICE candidates to peer
     pc.onicecandidate = (event) => {
       if (event.candidate && socket && socket.connected) {
+        const rId = useRoomStore.getState().roomId;
+        const myUid = String(useRoomStore.getState().userId);
         socket.emit('webrtc_signal', {
+          roomId: rId,
+          senderUserId: myUid,
           targetUserId: peerId,
           signal: { candidate: event.candidate },
         });
@@ -412,6 +465,8 @@ export const useVoiceStore = create((set, get) => ({
         audio = document.createElement('audio');
         audio.autoplay = true;
         audio.playsInline = true;
+        audio.setAttribute('playsinline', '');
+        audio.setAttribute('webkit-playsinline', '');
         audio.muted = false; // Never mute playback - allows hardware echo cancellation and loud audio
         audio.volume = 1.0;
         audio.style.display = 'none';
@@ -476,7 +531,11 @@ export const useVoiceStore = create((set, get) => ({
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        const rId = useRoomStore.getState().roomId;
+        const myUid = String(useRoomStore.getState().userId);
         socket.emit('webrtc_signal', {
+          roomId: rId,
+          senderUserId: myUid,
           targetUserId: peerId,
           signal: offer,
         });
