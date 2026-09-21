@@ -40,6 +40,10 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api/rooms', roomRoutes);
+app.post('/api/voice-token', (req, res, next) => {
+  req.url = '/voice-token';
+  roomRoutes(req, res, next);
+});
 
 initSocket(server);
 

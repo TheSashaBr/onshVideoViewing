@@ -124,15 +124,34 @@ export const useVoiceStore = create((set, get) => ({
       }
 
       // 1. Fetch LiveKit access token from backend
-      const res = await fetch(`${API_URL}/api/rooms/${roomId}/voice-token`, {
+      let res = await fetch(`${API_URL}/api/rooms/${encodeURIComponent(roomId)}/voice-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: myUserId, nickname }),
+      }).catch(err => {
+        console.warn('Primary voice token fetch failed:', err);
+        return null;
       });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Ошибка сервера: ${res.status}`);
+      // Fallback endpoint if primary returned 404 (e.g. during deployment or alternative route)
+      if (!res || !res.ok) {
+        const fallbackRes = await fetch(`${API_URL}/api/voice-token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roomId, userId: myUserId, nickname }),
+        }).catch(() => null);
+
+        if (fallbackRes && fallbackRes.ok) {
+          res = fallbackRes;
+        }
+      }
+
+      if (!res || !res.ok) {
+        if (res && res.status === 404) {
+          throw new Error('Сервер бэкенда обновляется (деплой на Render). Пожалуйста, подождите 1–2 минуты и попробуйте снова.');
+        }
+        const errData = res ? await res.json().catch(() => ({})) : {};
+        throw new Error(errData.error || (res ? `Ошибка сервера: ${res.status}` : 'Нет связи с сервером бэкенда'));
       }
 
       const { token, serverUrl } = await res.json();
