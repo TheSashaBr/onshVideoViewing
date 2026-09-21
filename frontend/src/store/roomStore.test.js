@@ -172,4 +172,47 @@ describe('roomStore', () => {
 
     expect(useRoomStore.getState().isHost).toBe(false);
   });
+
+  it('replaces the queue on QUEUE_STATE', () => {
+    const socket = joinAndGetSocket(true);
+
+    const queue = [
+      { id: 'a', url: 'https://youtu.be/aaaaaaaaaaa', videoType: 'youtube', addedBy: 'user2', nickname: 'Bob', addedAt: Date.now() },
+      { id: 'b', url: 'https://youtu.be/bbbbbbbbbbb', videoType: 'youtube', addedBy: 'user1', nickname: 'Alice', addedAt: Date.now() },
+    ];
+
+    socket.trigger('message', {
+      type: 'QUEUE_STATE',
+      roomId: 'room1',
+      senderId: 'SERVER',
+      timestamp: Date.now(),
+      payload: { queue },
+    });
+
+    expect(useRoomStore.getState().queue).toEqual(queue);
+
+    // An empty/malformed payload clears the queue rather than crashing.
+    socket.trigger('message', {
+      type: 'QUEUE_STATE',
+      roomId: 'room1',
+      senderId: 'SERVER',
+      timestamp: Date.now(),
+      payload: {},
+    });
+    expect(useRoomStore.getState().queue).toEqual([]);
+  });
+
+  it('emits QUEUE_ADD/QUEUE_REMOVE/QUEUE_NEXT via addToQueue/removeFromQueue/playNextFromQueue', () => {
+    const socket = joinAndGetSocket(true);
+    socket.emitted.length = 0; // ignore the initial join_room emit
+
+    useRoomStore.getState().addToQueue('https://youtu.be/aaaaaaaaaaa', 'youtube');
+    useRoomStore.getState().removeFromQueue('item-1');
+    useRoomStore.getState().playNextFromQueue();
+
+    const types = socket.emitted.map(e => e.payload.type);
+    expect(types).toEqual(['QUEUE_ADD', 'QUEUE_REMOVE', 'QUEUE_NEXT']);
+    expect(socket.emitted[0].payload.payload).toMatchObject({ url: 'https://youtu.be/aaaaaaaaaaa', videoType: 'youtube' });
+    expect(socket.emitted[1].payload.payload).toEqual({ itemId: 'item-1' });
+  });
 });

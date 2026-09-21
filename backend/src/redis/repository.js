@@ -32,6 +32,7 @@ async function getRoom(roomId) {
   await redisClient.expire(roomKey, ROOM_TTL);
   await redisClient.expire(`${roomKey}:members`, ROOM_TTL);
   await redisClient.expire(`${roomKey}:chat`, ROOM_TTL);
+  await redisClient.expire(`${roomKey}:queue`, ROOM_TTL);
   
   return room;
 }
@@ -76,6 +77,36 @@ async function getChatMessages(roomId) {
   return messages.map(msg => JSON.parse(msg)).reverse();
 }
 
+async function addQueueItem(roomId, item) {
+  const key = `room:${roomId}:queue`;
+  await redisClient.rPush(key, JSON.stringify(item));
+  await redisClient.expire(key, ROOM_TTL);
+}
+
+async function getQueue(roomId) {
+  const key = `room:${roomId}:queue`;
+  const items = await redisClient.lRange(key, 0, -1);
+  return items.map(item => JSON.parse(item));
+}
+
+async function removeQueueItem(roomId, itemId) {
+  const key = `room:${roomId}:queue`;
+  const items = await getQueue(roomId);
+  const filtered = items.filter(item => item.id !== itemId);
+  await redisClient.del(key);
+  if (filtered.length) {
+    await redisClient.rPush(key, filtered.map(item => JSON.stringify(item)));
+    await redisClient.expire(key, ROOM_TTL);
+  }
+  return filtered;
+}
+
+async function popNextQueueItem(roomId) {
+  const key = `room:${roomId}:queue`;
+  const raw = await redisClient.lPop(key);
+  return raw ? JSON.parse(raw) : null;
+}
+
 async function addVoiceUser(roomId, userId) {
   const key = `room:${roomId}:voice`;
   await redisClient.sAdd(key, String(userId));
@@ -97,5 +128,6 @@ module.exports = {
   createRoom, getRoom, updateRoomState,
   addMember, removeMember, getMembers,
   addChatMessage, getChatMessages,
-  addVoiceUser, removeVoiceUser, getVoiceUsers
+  addVoiceUser, removeVoiceUser, getVoiceUsers,
+  addQueueItem, getQueue, removeQueueItem, popNextQueueItem
 };

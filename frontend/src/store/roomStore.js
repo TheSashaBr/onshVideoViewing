@@ -12,6 +12,7 @@ export const useRoomStore = create((set, get) => ({
   isHost: false,
   members: [],
   chatMessages: [],
+  queue: [], // [{ id, url, videoType, addedBy, nickname, addedAt }]
   typingUsers: {}, // { [userId]: { nickname: string, timeoutId: number } }
   lastRemoteAction: null,
   connectionStatus: 'disconnected',
@@ -265,6 +266,9 @@ export const useRoomStore = create((set, get) => ({
             );
           }
           break;
+        case 'QUEUE_STATE':
+          set({ queue: Array.isArray(payload?.queue) ? payload.queue : [] });
+          break;
         case 'HOST_CHANGED': {
           const rawMembers = Array.isArray(payload?.members) ? payload.members : [];
           const memberMap = new Map();
@@ -380,6 +384,19 @@ export const useRoomStore = create((set, get) => ({
     get().sendMessage('TYPING_STATUS', { nickname, isTyping });
   },
 
+  addToQueue: (url, videoType = 'youtube') => {
+    const { nickname } = get();
+    get().sendMessage('QUEUE_ADD', { url, videoType, nickname });
+  },
+
+  removeFromQueue: (itemId) => {
+    get().sendMessage('QUEUE_REMOVE', { itemId });
+  },
+
+  playNextFromQueue: () => {
+    get().sendMessage('QUEUE_NEXT', {});
+  },
+
   setControlMode: (mode) => {
     const { socket, isHost } = get();
     if (socket && isHost) {
@@ -415,6 +432,7 @@ export const useRoomStore = create((set, get) => ({
       isHost: false,
       members: [],
       chatMessages: [],
+      queue: [],
       typingUsers: {},
       lastRemoteAction: null,
       isJoining: false,

@@ -1,7 +1,11 @@
+const { v4: uuidv4 } = require('uuid');
 const {
   getRoom, updateRoomState, addMember, removeMember, getMembers,
-  addChatMessage, getChatMessages, addVoiceUser, removeVoiceUser, getVoiceUsers
+  addChatMessage, getChatMessages, addVoiceUser, removeVoiceUser, getVoiceUsers,
+  addQueueItem, getQueue, removeQueueItem, popNextQueueItem
 } = require('../redis/repository');
+
+const MAX_QUEUE_SIZE = 50;
 
 // In-memory map to buffer temporary mobile network blips / permission prompts
 const pendingDisconnectTimers = new Map(); // key: `${roomId}:${userId}` -> { timer: NodeJS.Timeout, wasVoiceActive: boolean }
@@ -275,6 +279,19 @@ function setupHandlers(io, socket) {
     }
 
     try {
+      const queue = await getQueue(roomId);
+      socket.emit('message', {
+        type: 'QUEUE_STATE',
+        roomId,
+        senderId: 'SERVER',
+        timestamp: Date.now(),
+        payload: { queue }
+      });
+    } catch (e) {
+      console.error('Error fetching queue:', e);
+    }
+
+    try {
       await broadcastVoiceUsers(io, roomId);
     } catch (e) {
       console.error('Error broadcasting voice users on join:', e);
@@ -397,7 +414,119 @@ function setupHandlers(io, socket) {
           io.to(roomId).emit('message', msg);
           break;
         }
-          
+
+        case 'QUEUE_ADD': {
+          const room = await getRoom(roomId);
+          if (!room) return;
+
+          if (room.controlMode === 'host' && !socket.isHost) {
+            socket.emit('control_denied', { action: type });
+            return;
+          }
+
+          const url = (payload?.url || '').trim().slice(0, 500);
+          if (!url) return;
+
+          const existingQueue = await getQueue(roomId);
+          if (existingQueue.length >= MAX_QUEUE_SIZE) {
+            socket.emit('error', 'Очередь переполнена (максимум 50 видео)');
+            return;
+          }
+
+          await addQueueItem(roomId, {
+            id: uuidv4(),
+            url,
+            videoType: payload?.videoType || 'youtube',
+            addedBy: senderId,
+            nickname: (payload?.nickname || 'Аноним').slice(0, 30),
+            addedAt: timestamp || Date.now()
+          });
+
+          const updatedQueue = await getQueue(roomId);
+          io.to(roomId).emit('message', {
+            type: 'QUEUE_STATE',
+            roomId,
+            senderId: 'SERVER',
+            timestamp: Date.now(),
+            payload: { queue: updatedQueue }
+          });
+          break;
+        }
+
+        case 'QUEUE_REMOVE': {
+          const room = await getRoom(roomId);
+          if (!room) return;
+
+          if (room.controlMode === 'host' && !socket.isHost) {
+            socket.emit('control_denied', { action: type });
+            return;
+          }
+
+          const itemId = payload?.itemId;
+          if (!itemId) return;
+
+          const queueBefore = await getQueue(roomId);
+          const target = queueBefore.find(item => item.id === itemId);
+          if (!target) return;
+          // Anyone may remove their own suggestion; only the host may remove others'.
+          if (!socket.isHost && String(target.addedBy) !== String(senderId)) return;
+
+          const updatedQueue = await removeQueueItem(roomId, itemId);
+          io.to(roomId).emit('message', {
+            type: 'QUEUE_STATE',
+            roomId,
+            senderId: 'SERVER',
+            timestamp: Date.now(),
+            payload: { queue: updatedQueue }
+          });
+          break;
+        }
+
+        case 'QUEUE_NEXT': {
+          const room = await getRoom(roomId);
+          if (!room) return;
+
+          if (room.controlMode === 'host' && !socket.isHost) {
+            socket.emit('control_denied', { action: type });
+            return;
+          }
+
+          const nextItem = await popNextQueueItem(roomId);
+          if (!nextItem) return;
+
+          await updateRoomState(roomId, {
+            videoUrl: nextItem.url,
+            videoType: nextItem.videoType || 'youtube',
+            currentTime: 0,
+            isPlaying: 'false',
+            lastUpdatedAt: Date.now(),
+            lastUpdatedBy: senderId
+          });
+
+          io.to(roomId).emit('message', {
+            type: 'LOAD_VIDEO',
+            roomId,
+            senderId: 'SERVER',
+            timestamp: Date.now(),
+            payload: {
+              videoUrl: nextItem.url,
+              videoType: nextItem.videoType || 'youtube',
+              currentTime: 0,
+              isPlaying: false
+            }
+          });
+
+          const updatedQueue = await getQueue(roomId);
+          io.to(roomId).emit('message', {
+            type: 'QUEUE_STATE',
+            roomId,
+            senderId: 'SERVER',
+            timestamp: Date.now(),
+            payload: { queue: updatedQueue }
+          });
+          break;
+        }
+
         case 'CHAT_MESSAGE': {
           const text = (payload.text || '').trim().slice(0, 500);
           if (!text) break;

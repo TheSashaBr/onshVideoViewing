@@ -10,6 +10,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
   onSeek,
   onError,
   onTimeUpdate,
+  onEnded,
 }, ref) {
   const playerRef = useRef(null);
   // Startup grace period: ignore player initialization events for the first 6 seconds
@@ -238,6 +239,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
         onReady={handleReady}
         onPlay={handlePlay}
         onPause={handlePause}
+        onEnd={() => onEnded?.()}
         onError={handleError}
         className="w-full h-full absolute inset-0"
         iframeClassName="w-full h-full"

@@ -53,6 +53,23 @@ Object.assign(redisClient, {
     const arr = lists.get(key) || [];
     return arr.slice(start, stop === -1 ? undefined : stop + 1);
   },
+  async rPush(key, value) {
+    const arr = lists.get(key) || [];
+    if (Array.isArray(value)) arr.push(...value);
+    else arr.push(value);
+    lists.set(key, arr);
+  },
+  async lPop(key) {
+    const arr = lists.get(key) || [];
+    const val = arr.shift();
+    lists.set(key, arr);
+    return val === undefined ? null : val;
+  },
+  async del(key) {
+    hashes.delete(key);
+    lists.delete(key);
+    sets.delete(key);
+  },
   async sAdd(key, value) {
     const s = sets.get(key) || new Set();
     s.add(String(value));
@@ -203,5 +220,146 @@ describe('socket handlers', () => {
 
     const denialPayload = await denied;
     assert.equal(denialPayload.action, 'PLAY');
+  });
+
+  it('adds a video to the queue and broadcasts the updated queue to everyone', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    const guestId = uuidv4();
+    guestSocket.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    const guestSeesQueue = waitForMessageOfType(guestSocket, 'QUEUE_STATE');
+    hostSocket.emit('message', {
+      type: 'QUEUE_ADD',
+      roomId,
+      senderId: hostId,
+      timestamp: Date.now(),
+      payload: { url: 'https://youtu.be/dQw4w9WgXcQ', videoType: 'youtube', nickname: 'Host' },
+    });
+
+    const queueMsg = await guestSeesQueue;
+    assert.equal(queueMsg.payload.queue.length, 1);
+    assert.equal(queueMsg.payload.queue[0].url, 'https://youtu.be/dQw4w9WgXcQ');
+    assert.equal(queueMsg.payload.queue[0].addedBy, hostId);
+  });
+
+  it('lets a guest remove their own queued item but not one added by someone else', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    const guestId = uuidv4();
+    guestSocket.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    // Host adds an item; guest adds an item. QUEUE_STATE broadcasts to the
+    // whole room, so both sockets must drain the first broadcast before we
+    // start listening for the second one, or a listener set up "too late"
+    // ends up catching the earlier (still in-flight) message instead.
+    const hostItemAddedOnHost = waitForMessageOfType(hostSocket, 'QUEUE_STATE');
+    const hostItemAddedOnGuest = waitForMessageOfType(guestSocket, 'QUEUE_STATE');
+    hostSocket.emit('message', {
+      type: 'QUEUE_ADD', roomId, senderId: hostId, timestamp: Date.now(),
+      payload: { url: 'https://youtu.be/aaaaaaaaaaa', videoType: 'youtube', nickname: 'Host' },
+    });
+    await Promise.all([hostItemAddedOnHost, hostItemAddedOnGuest]);
+
+    const guestItemAdded = waitForMessageOfType(guestSocket, 'QUEUE_STATE');
+    guestSocket.emit('message', {
+      type: 'QUEUE_ADD', roomId, senderId: guestId, timestamp: Date.now(),
+      payload: { url: 'https://youtu.be/bbbbbbbbbbb', videoType: 'youtube', nickname: 'Guest' },
+    });
+    const afterBothAdded = await guestItemAdded;
+    assert.equal(afterBothAdded.payload.queue.length, 2);
+
+    const hostItemId = afterBothAdded.payload.queue.find(i => i.addedBy === hostId).id;
+    const guestItemId = afterBothAdded.payload.queue.find(i => i.addedBy === guestId).id;
+
+    // Guest cannot remove the host's item — no QUEUE_STATE update should follow.
+    let unexpectedUpdate = false;
+    const guard = (msg) => { if (msg.type === 'QUEUE_STATE') unexpectedUpdate = true; };
+    guestSocket.on('message', guard);
+    guestSocket.emit('message', {
+      type: 'QUEUE_REMOVE', roomId, senderId: guestId, timestamp: Date.now(),
+      payload: { itemId: hostItemId },
+    });
+    await new Promise(r => setTimeout(r, 300));
+    guestSocket.off('message', guard);
+    assert.equal(unexpectedUpdate, false);
+
+    // Guest can remove their own item.
+    const removed = waitForMessageOfType(guestSocket, 'QUEUE_STATE');
+    guestSocket.emit('message', {
+      type: 'QUEUE_REMOVE', roomId, senderId: guestId, timestamp: Date.now(),
+      payload: { itemId: guestItemId },
+    });
+    const afterRemove = await removed;
+    assert.equal(afterRemove.payload.queue.length, 1);
+    assert.equal(afterRemove.payload.queue[0].id, hostItemId);
+  });
+
+  it('QUEUE_NEXT loads the next queued video for everyone and shrinks the queue', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    const guestId = uuidv4();
+    guestSocket.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    const added = waitForMessageOfType(hostSocket, 'QUEUE_STATE');
+    hostSocket.emit('message', {
+      type: 'QUEUE_ADD', roomId, senderId: hostId, timestamp: Date.now(),
+      payload: { url: 'https://youtu.be/ccccccccccc', videoType: 'youtube', nickname: 'Host' },
+    });
+    await added;
+    // Same-socket per-message throttle in handlers.js is 100ms — wait it out
+    // so the next emit from hostSocket isn't silently dropped.
+    await new Promise(r => setTimeout(r, 150));
+
+    const guestLoadsNext = waitForMessageOfType(guestSocket, 'LOAD_VIDEO');
+    const guestQueueShrinks = waitForMessageOfType(guestSocket, 'QUEUE_STATE');
+    hostSocket.emit('message', {
+      type: 'QUEUE_NEXT', roomId, senderId: hostId, timestamp: Date.now(), payload: {},
+    });
+
+    const loadMsg = await guestLoadsNext;
+    assert.equal(loadMsg.payload.videoUrl, 'https://youtu.be/ccccccccccc');
+    const queueMsg = await guestQueueShrinks;
+    assert.equal(queueMsg.payload.queue.length, 0);
+  });
+
+  it('blocks a non-host from adding to the queue once control_mode is host-only', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    const guestId = uuidv4();
+    guestSocket.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    const controlModeChanged = waitForMessageOfType(guestSocket, 'CONTROL_MODE_CHANGED');
+    hostSocket.emit('set_control_mode', { mode: 'host' });
+    await controlModeChanged;
+
+    const denied = waitForEvent(guestSocket, 'control_denied');
+    guestSocket.emit('message', {
+      type: 'QUEUE_ADD', roomId, senderId: guestId, timestamp: Date.now(),
+      payload: { url: 'https://youtu.be/ddddddddddd', videoType: 'youtube', nickname: 'Guest' },
+    });
+
+    const denialPayload = await denied;
+    assert.equal(denialPayload.action, 'QUEUE_ADD');
   });
 });
