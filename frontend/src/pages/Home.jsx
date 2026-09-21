@@ -73,9 +73,9 @@ export default function Home() {
   ];
 
   return (
-    <div className="min-h-[100dvh] bg-surface text-white relative overflow-hidden flex flex-col justify-between selection:bg-accent/30 selection:text-white">
+    <div className="min-h-[100dvh] w-full bg-surface text-white relative overflow-x-hidden flex flex-col justify-between selection:bg-accent/30 selection:text-white">
       {/* Ambient background glow effects */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div
           className="absolute -top-32 -left-32 w-[550px] h-[550px] bg-blue-600/10 rounded-full blur-[140px] animate-pulse"
           style={{ animationDuration: '9s' }}
@@ -88,7 +88,7 @@ export default function Home() {
       </div>
 
       {/* Top Header */}
-      <header className="relative z-10 px-6 py-5 max-w-6xl w-full mx-auto flex items-center justify-between">
+      <header className="relative z-10 px-4 sm:px-6 py-4 sm:py-5 max-w-6xl w-full mx-auto flex items-center justify-between pt-safe">
         <div className="flex items-center gap-3">
           <img
             src="/onsh-logo.png"
@@ -103,7 +103,7 @@ export default function Home() {
       </header>
 
       {/* Main Hero & Actions */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 py-8 sm:py-12 max-w-3xl w-full mx-auto">
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 py-8 sm:py-14 max-w-3xl w-full mx-auto">
         <div className="w-full text-center space-y-8 animate-fade-in">
           {/* Tagline */}
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.04] border border-border-subtle text-xs font-medium text-gray-300 backdrop-blur-sm shadow-sm">
@@ -234,8 +234,8 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 py-6 px-4 border-t border-border-subtle text-center text-xs text-gray-500 max-w-6xl w-full mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-gray-400">
+      <footer className="relative z-10 py-6 px-4 border-t border-border-subtle text-center text-xs text-gray-500 max-w-6xl w-full mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 pb-safe mt-10 sm:mt-16">
+        <div className="flex flex-wrap items-center justify-center gap-2 text-gray-400">
           <span>⚡ Мгновенный запуск</span>
           <span>·</span>
           <span>🔒 Без регистрации</span>

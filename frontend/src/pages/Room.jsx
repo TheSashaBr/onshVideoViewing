@@ -301,7 +301,7 @@ export default function Room() {
   // Nickname entry modal before joining
   if (!hasJoined) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 bg-surface text-white relative overflow-hidden">
+      <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 bg-surface text-white relative overflow-y-auto pt-safe pb-safe">
         {/* Ambient background glow */}
         <div className="absolute inset-0 pointer-events-none">
           <div
@@ -411,7 +411,7 @@ export default function Room() {
   return (
     <div
       ref={containerRef}
-      className="flex flex-col md:flex-row h-[100dvh] w-full bg-surface text-white overflow-hidden select-none relative"
+      className="flex flex-col md:flex-row h-[100dvh] w-full bg-surface text-white overflow-hidden select-none fixed inset-0"
     >
       {/* Loading overlay right after joining until room data arrives */}
       {isJoining && !hasJoinedRoom && (
