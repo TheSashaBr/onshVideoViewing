@@ -32,7 +32,7 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: Date.now() });
+  res.status(200).json({ status: 'ok', version: 'livekit-sfu-v2', timestamp: Date.now() });
 });
 
 app.get('/', (req, res) => {

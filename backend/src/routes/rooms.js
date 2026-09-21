@@ -1,6 +1,6 @@
 const express = require('express');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { AccessToken } = require('livekit-server-sdk');
 const { createRoom, getRoom } = require('../redis/repository');
 
 const router = express.Router();
@@ -8,6 +8,45 @@ const router = express.Router();
 const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || 'APIaRVBdror5c2K';
 const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '0jok3FQxo46YPiKzZvEuejHkfuNGz5H5gK51zbBMHoZ';
 const LIVEKIT_URL = process.env.LIVEKIT_URL || 'wss://onshvideowatching-jbxlr1u5.livekit.cloud';
+
+function base64Url(str) {
+  return Buffer.from(str)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function generateLiveKitJwt({ apiKey, apiSecret, identity, name, room, ttlSeconds = 24 * 3600 }) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const payload = {
+    iss: apiKey,
+    sub: String(identity),
+    name: name || 'Участник',
+    nbf: now - 5,
+    exp: now + ttlSeconds,
+    video: {
+      roomJoin: true,
+      room: String(room),
+      canPublish: true,
+      canSubscribe: true,
+    },
+  };
+
+  const encodedHeader = base64Url(JSON.stringify(header));
+  const encodedPayload = base64Url(JSON.stringify(payload));
+  const data = `${encodedHeader}.${encodedPayload}`;
+  const signature = crypto
+    .createHmac('sha256', apiSecret)
+    .update(data)
+    .digest('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+
+  return `${data}.${signature}`;
+}
 
 async function generateVoiceTokenHandler(req, res) {
   try {
@@ -21,19 +60,14 @@ async function generateVoiceTokenHandler(req, res) {
       return res.status(400).json({ error: 'userId is required' });
     }
 
-    const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+    const token = generateLiveKitJwt({
+      apiKey: LIVEKIT_API_KEY,
+      apiSecret: LIVEKIT_API_SECRET,
       identity: String(userId),
       name: nickname || 'Участник',
-    });
-
-    at.addGrant({
-      roomJoin: true,
       room: String(roomId),
-      canPublish: true,
-      canSubscribe: true,
     });
 
-    const token = await at.toJwt();
     res.json({ token, serverUrl: LIVEKIT_URL });
   } catch (err) {
     console.error('Error generating LiveKit token:', err);
