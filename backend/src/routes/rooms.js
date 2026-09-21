@@ -5,9 +5,13 @@ const { createRoom, getRoom } = require('../redis/repository');
 
 const router = express.Router();
 
-const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || 'APIaRVBdror5c2K';
-const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '0jok3FQxo46YPiKzZvEuejHkfuNGz5H5gK51zbBMHoZ';
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
 const LIVEKIT_URL = process.env.LIVEKIT_URL || 'wss://onshvideowatching-jbxlr1u5.livekit.cloud';
+
+if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+  console.warn('[WARN] LIVEKIT_API_KEY / LIVEKIT_API_SECRET are not set — voice chat token issuance will fail.');
+}
 
 function base64Url(str) {
   return Buffer.from(str)
@@ -58,6 +62,9 @@ async function generateVoiceTokenHandler(req, res) {
     }
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' });
+    }
+    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+      return res.status(503).json({ error: 'Voice chat is not configured on this server' });
     }
 
     const token = generateLiveKitJwt({

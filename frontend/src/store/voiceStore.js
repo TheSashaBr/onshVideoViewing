@@ -3,56 +3,6 @@ import { Room, RoomEvent, Track } from 'livekit-client';
 import { useRoomStore } from './roomStore';
 import { showToast } from '../components/ToastContainer';
 const LIVEKIT_DEFAULT_URL = 'wss://onshvideowatching-jbxlr1u5.livekit.cloud';
-const LIVEKIT_DEFAULT_KEY = 'APIaRVBdror5c2K';
-const LIVEKIT_DEFAULT_SECRET = '0jok3FQxo46YPiKzZvEuejHkfuNGz5H5gK51zbBMHoZ';
-
-function base64UrlEncode(input) {
-  const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input);
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary)
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-}
-
-async function generateClientVoiceToken({ apiKey, apiSecret, identity, name, room }) {
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const payload = {
-    iss: apiKey,
-    sub: String(identity),
-    name: name || 'Участник',
-    nbf: now - 5,
-    exp: now + 24 * 3600,
-    video: {
-      roomJoin: true,
-      room: String(room),
-      canPublish: true,
-      canSubscribe: true,
-    },
-  };
-
-  const encHeader = base64UrlEncode(JSON.stringify(header));
-  const encPayload = base64UrlEncode(JSON.stringify(payload));
-  const data = `${encHeader}.${encPayload}`;
-
-  const enc = new TextEncoder();
-  const key = await window.crypto.subtle.importKey(
-    'raw',
-    enc.encode(apiSecret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const sigBuf = await window.crypto.subtle.sign('HMAC', key, enc.encode(data));
-  const signature = base64UrlEncode(sigBuf);
-
-  return `${data}.${signature}`;
-}
 
 export const useVoiceStore = create((set, get) => ({
   isInVoice: false,
@@ -173,7 +123,9 @@ export const useVoiceStore = create((set, get) => ({
         throw new Error('ID комнаты или пользователя не найден');
       }
 
-      // 1. Obtain LiveKit access token (backend first, local WebCrypto fallback if 404/deploying)
+      // Obtain LiveKit access token from the backend. The signing secret must
+      // never be exposed to the client, so there is no client-side fallback here —
+      // if the backend can't issue a token, voice chat simply can't start.
       let token = null;
       let serverUrl = LIVEKIT_DEFAULT_URL;
 
@@ -200,23 +152,11 @@ export const useVoiceStore = create((set, get) => ({
           }
         }
       } catch (fetchErr) {
-        console.warn('Backend voice-token warning, falling back to client generation:', fetchErr);
-      }
-
-      // Seamless fallback: generate signed LiveKit JWT directly in browser
-      if (!token) {
-        console.info('[LiveKit] Backend endpoint not reachable or returned 404, generating direct token via WebCrypto...');
-        token = await generateClientVoiceToken({
-          apiKey: LIVEKIT_DEFAULT_KEY,
-          apiSecret: LIVEKIT_DEFAULT_SECRET,
-          identity: myUserId,
-          name: nickname,
-          room: roomId,
-        });
+        console.warn('Backend voice-token error:', fetchErr);
       }
 
       if (!token) {
-        throw new Error('Не удалось получить токен подключения к голосовому чату');
+        throw new Error('Не удалось получить токен подключения к голосовому чату. Попробуйте ещё раз позже.');
       }
 
       // 2. Initialize LiveKit Room

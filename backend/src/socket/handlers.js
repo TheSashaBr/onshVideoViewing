@@ -110,12 +110,16 @@ function setupHandlers(io, socket) {
   // Simple per-socket message throttle
   let lastMessageTime = 0;
   const MIN_MESSAGE_INTERVAL = 100; // ms
-  socket.on('join_room', async ({ roomId, userId, nickname, isHost }) => {
+  socket.on('join_room', async ({ roomId, userId, nickname }) => {
     const room = await getRoom(roomId);
     if (!room) {
       socket.emit('error', 'Room not found');
       return;
     }
+
+    // Host status is never trusted from the client — it is derived from the
+    // hostId assigned server-side at room creation (see routes/rooms.js).
+    const verifiedIsHost = !!room.hostId && String(room.hostId) === String(userId);
 
     const discKey = `${roomId}:${userId}`;
     if (pendingDisconnectTimers.has(discKey)) {
@@ -128,7 +132,7 @@ function setupHandlers(io, socket) {
     socket.roomId = roomId;
     socket.userId = String(userId);
     socket.nickname = nickname;
-    socket.isHost = !!isHost;
+    socket.isHost = verifiedIsHost;
     socket.joinedAt = Date.now();
 
     // Check if user was previously marked in voice in Redis
@@ -142,7 +146,7 @@ function setupHandlers(io, socket) {
     await addMember(roomId, userId, {
       nickname,
       joinedAt: Date.now(),
-      isHost: !!isHost
+      isHost: verifiedIsHost
     });
 
     const members = await getLiveRoomMembers(io, roomId);
