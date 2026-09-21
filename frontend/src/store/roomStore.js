@@ -35,7 +35,7 @@ export const useRoomStore = create((set, get) => ({
     }
 
     const socket = io(API_URL, {
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,

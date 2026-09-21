@@ -71,7 +71,7 @@ async function broadcastVoiceUsers(io, roomId) {
     }
   }
 
-  // Get current voice users from Redis
+  // Get current voice users from Redis (source of truth)
   let redisVoiceUsers = [];
   try {
     redisVoiceUsers = await getVoiceUsers(roomId);
@@ -84,20 +84,10 @@ async function broadcastVoiceUsers(io, roomId) {
   if (Array.isArray(redisVoiceUsers)) {
     for (const uid of redisVoiceUsers) {
       const uidStr = String(uid);
+      verifiedVoiceUsers.add(uidStr);
       const sock = activeSocketsByUserId.get(uidStr);
-      const pending = pendingDisconnectTimers.get(`${roomId}:${uidStr}`);
-
       if (sock) {
-        // Socket is connected in the room: confirm voice active on socket
         sock.isVoiceActive = true;
-        verifiedVoiceUsers.add(uidStr);
-      } else if (pending && pending.wasVoiceActive) {
-        // User is temporarily disconnected (e.g. mobile mic permission prompt or tab switch)
-        verifiedVoiceUsers.add(uidStr);
-      } else {
-        // User is truly disconnected and not in grace period: prune from Redis
-        console.log(`[CLEANUP] Pruning inactive voice user ${uidStr} from Redis for room ${roomId}`);
-        await removeVoiceUser(roomId, uidStr).catch(() => {});
       }
     }
   }

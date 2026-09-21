@@ -258,8 +258,8 @@ export const useVoiceStore = create((set, get) => ({
         isConnecting: false,
         audioBlocked: false,
         voiceHeartbeatInterval: heartbeat,
-        roomVoiceUsers,
-        activeSpeakers: new Set([myUserId]),
+        roomVoiceUsers: new Set([...get().roomVoiceUsers, myUserId]),
+        activeSpeakers: new Set([...get().activeSpeakers, myUserId]),
       });
 
       // 6. Local speech activity detection

@@ -82,6 +82,26 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
             )}
           </div>
 
+          {/* Active Voice Participants Preview */}
+          {voiceCount > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3 p-2 bg-emerald-950/40 rounded-xl border border-emerald-500/20">
+              {Array.from(roomVoiceUsers).map(uid => {
+                const m = members.find(mem => String(mem.userId) === String(uid));
+                const nick = m ? getCleanNick(m.nickname) : 'Участник';
+                const av = m ? getAvatarChar(m.nickname) : '🎤';
+                return (
+                  <span
+                    key={uid}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 text-[11px] font-medium border border-emerald-500/30"
+                  >
+                    <span>{av}</span>
+                    <span className="truncate max-w-[120px]">{nick}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
           <button
             onClick={joinVoice}
             disabled={isConnecting}
@@ -186,7 +206,7 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
         {/* Voice Participants List */}
         <div className="space-y-1.5 mb-3 max-h-44 overflow-y-auto pr-1">
           {voiceMembers.map(m => {
-            const isMe = m.userId === currentUserId;
+            const isMe = String(m.userId) === String(currentUserId);
             const isTalking = talkingUsers.has(m.userId) || talkingUsers.has(String(m.userId));
             const avatarChar = getAvatarChar(m.nickname);
             const cleanNick = getCleanNick(m.nickname);
