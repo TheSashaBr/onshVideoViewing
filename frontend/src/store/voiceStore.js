@@ -239,7 +239,7 @@ export const useVoiceStore = create((set, get) => ({
       const roomVoiceUsers = new Set(get().roomVoiceUsers);
       roomVoiceUsers.add(myUserId);
 
-      // 5. Heartbeat to maintain voice connection even across network blips
+      // 5. Lightweight presence ping to keep Redis TTL refreshed without reconnect storms
       if (get().voiceHeartbeatInterval) {
         clearInterval(get().voiceHeartbeatInterval);
       }
@@ -247,11 +247,10 @@ export const useVoiceStore = create((set, get) => ({
         const s = useRoomStore.getState().socket;
         const rId = useRoomStore.getState().roomId;
         const uId = useRoomStore.getState().userId;
-        const nick = useRoomStore.getState().nickname;
         if (get().isInVoice && s && s.connected && rId && uId) {
-          s.emit('webrtc_join_voice', { roomId: rId, userId: String(uId), nickname: nick });
+          s.emit('webrtc_voice_ping', { roomId: rId, userId: String(uId) });
         }
-      }, 5000);
+      }, 10000);
 
       set({
         isInVoice: true,
@@ -294,6 +293,12 @@ export const useVoiceStore = create((set, get) => ({
 
     if (socket && socket.connected && roomId) {
       socket.emit('webrtc_leave_voice', { roomId, userId: myUserId });
+    }
+
+    if (socket) {
+      socket.off('webrtc_peer_joined_voice');
+      socket.off('webrtc_existing_voice_peers');
+      socket.off('webrtc_signal_relay');
     }
 
     // Stop all microphone tracks
@@ -376,7 +381,12 @@ export const useVoiceStore = create((set, get) => ({
           // Deterministic initiator: the peer with higher string ID initiates offer
           const isInitiator = String(myUserId) > uid;
           const activeStream = stream || get().localStream;
-          if (isInitiator && activeStream && get().isInVoice) {
+          const existingPc = get().peerConnections[uid];
+          const isHealthy = existingPc && (
+            existingPc.connectionState === 'connected' ||
+            existingPc.connectionState === 'connecting'
+          );
+          if (isInitiator && activeStream && get().isInVoice && !isHealthy) {
             await get().createPeerConnection(uid, true, activeStream);
           }
         }
@@ -402,13 +412,19 @@ export const useVoiceStore = create((set, get) => ({
       // Deterministic initiator: the peer with higher string ID initiates offer
       const isInitiator = String(myUserId) > peerId;
       const activeStream = stream || get().localStream;
-      if (isInitiator && activeStream && get().isInVoice) {
+      const existingPc = get().peerConnections[peerId];
+      const isHealthy = existingPc && (
+        existingPc.connectionState === 'connected' ||
+        existingPc.connectionState === 'connecting'
+      );
+      if (isInitiator && activeStream && get().isInVoice && !isHealthy) {
         await get().createPeerConnection(peerId, true, activeStream);
       }
     });
 
     // Handle incoming WebRTC signals (offer, answer, ICE candidate)
     socket.on('webrtc_signal_relay', async ({ senderUserId: rawSender, targetUserId: rawTarget, signal }) => {
+      if (!get().isInVoice) return;
       const senderUserId = String(rawSender);
       const targetUserId = String(rawTarget);
 
@@ -526,11 +542,6 @@ export const useVoiceStore = create((set, get) => ({
     }
 
     const pc = new RTCPeerConnection(ICE_SERVERS);
-
-    // Ensure audio transceiver is registered with sendrecv for mobile browsers
-    try {
-      pc.addTransceiver('audio', { direction: 'sendrecv' });
-    } catch (e) {}
 
     // Add local microphone audio tracks
     const activeStream = stream || get().localStream;
@@ -731,6 +742,9 @@ export const useVoiceStore = create((set, get) => ({
 
     const updatedStates = { ...get().peerConnectionStates };
     delete updatedStates[uid];
+
+    const updatedTalking = new Set(get().talkingUsers);
+    updatedTalking.delete(uid);
 
     set({
       peerConnections: updatedPcs,

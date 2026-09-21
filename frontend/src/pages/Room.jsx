@@ -441,7 +441,7 @@ export default function Room() {
           <button
             onClick={() => {
               const fullNickname = `${selectedAvatar} ${nickname.trim()}`;
-              const userId = hostToken || uuidv4();
+              const userId = hostToken || getOrCreateGuestId(roomId);
               joinRoom(roomId, userId, fullNickname, isHost);
             }}
             className="ml-2 px-2.5 py-0.5 bg-white text-red-600 rounded-lg text-[11px] font-bold hover:bg-gray-100 transition active:scale-95 cursor-pointer"

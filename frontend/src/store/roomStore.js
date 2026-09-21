@@ -246,6 +246,12 @@ export const useRoomStore = create((set, get) => ({
     
     socket.on('error', (err) => {
       console.error('Socket error:', err);
+      if (err === 'Room not found' || (typeof err === 'string' && err.includes('Room not found'))) {
+        showToast('Комната не найдена или срок её действия истёк', 'error', 5000);
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 1500);
+      }
     });
   },
   

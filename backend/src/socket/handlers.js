@@ -4,7 +4,7 @@ const {
 } = require('../redis/repository');
 
 // In-memory map to buffer temporary mobile network blips / permission prompts
-const pendingDisconnectTimers = new Map(); // key: `${roomId}:${userId}` -> NodeJS.Timeout
+const pendingDisconnectTimers = new Map(); // key: `${roomId}:${userId}` -> { timer: NodeJS.Timeout, wasVoiceActive: boolean }
 
 // Helper to get active members verified against connected Socket.IO sockets
 async function getLiveRoomMembers(io, roomId) {
@@ -60,46 +60,57 @@ async function getLiveRoomMembers(io, roomId) {
 async function broadcastVoiceUsers(io, roomId) {
   if (!roomId) return [];
   const socketRoom = io.sockets.adapter.rooms.get(roomId);
-  const activeVoiceUserIds = new Set();
-  const connectedUserIds = new Set();
+  const activeSocketsByUserId = new Map();
 
   if (socketRoom) {
     for (const sId of socketRoom) {
       const s = io.sockets.sockets.get(sId);
       if (s && s.userId) {
-        connectedUserIds.add(String(s.userId));
-        if (s.isVoiceActive) {
-          activeVoiceUserIds.add(String(s.userId));
-        }
+        activeSocketsByUserId.set(String(s.userId), s);
       }
     }
   }
 
-  // Preserve users who are in a short grace period (mobile tab switch or mic permission prompt)
-  for (const [key] of pendingDisconnectTimers.entries()) {
-    const [tRoomId, tUserId] = key.split(':');
-    if (tRoomId === roomId && tUserId) {
-      activeVoiceUserIds.add(String(tUserId));
-      connectedUserIds.add(String(tUserId));
-    }
-  }
-
+  // Get current voice users from Redis
+  let redisVoiceUsers = [];
   try {
-    const redisVoiceUsers = await getVoiceUsers(roomId);
-    if (Array.isArray(redisVoiceUsers)) {
-      for (const uid of redisVoiceUsers) {
-        const uidStr = String(uid);
-        if (!connectedUserIds.has(uidStr)) {
-          console.log(`[CLEANUP] Pruning dead voice user ${uidStr} from Redis for room ${roomId}`);
-          await removeVoiceUser(roomId, uidStr).catch(() => {});
-        }
-      }
-    }
+    redisVoiceUsers = await getVoiceUsers(roomId);
   } catch (err) {
-    console.error('[WEBRTC] Error synchronizing voice users with Redis:', err);
+    console.error('[WEBRTC] Error getting voice users from Redis:', err);
   }
 
-  const voiceUsersList = Array.from(activeVoiceUserIds);
+  const verifiedVoiceUsers = new Set();
+
+  if (Array.isArray(redisVoiceUsers)) {
+    for (const uid of redisVoiceUsers) {
+      const uidStr = String(uid);
+      const sock = activeSocketsByUserId.get(uidStr);
+      const pending = pendingDisconnectTimers.get(`${roomId}:${uidStr}`);
+
+      if (sock) {
+        // Socket is connected in the room: confirm voice active on socket
+        sock.isVoiceActive = true;
+        verifiedVoiceUsers.add(uidStr);
+      } else if (pending && pending.wasVoiceActive) {
+        // User is temporarily disconnected (e.g. mobile mic permission prompt or tab switch)
+        verifiedVoiceUsers.add(uidStr);
+      } else {
+        // User is truly disconnected and not in grace period: prune from Redis
+        console.log(`[CLEANUP] Pruning inactive voice user ${uidStr} from Redis for room ${roomId}`);
+        await removeVoiceUser(roomId, uidStr).catch(() => {});
+      }
+    }
+  }
+
+  // Also include any connected socket that has isVoiceActive = true but wasn't in Redis yet
+  for (const [uidStr, sock] of activeSocketsByUserId.entries()) {
+    if (sock.isVoiceActive && !verifiedVoiceUsers.has(uidStr)) {
+      verifiedVoiceUsers.add(uidStr);
+      await addVoiceUser(roomId, uidStr).catch(() => {});
+    }
+  }
+
+  const voiceUsersList = Array.from(verifiedVoiceUsers);
   console.log(`[WEBRTC] Room ${roomId} real active voice users (${voiceUsersList.length}):`, voiceUsersList);
   io.to(roomId).emit('webrtc_voice_users_list', { users: voiceUsersList });
   return voiceUsersList;
@@ -118,7 +129,8 @@ function setupHandlers(io, socket) {
 
     const discKey = `${roomId}:${userId}`;
     if (pendingDisconnectTimers.has(discKey)) {
-      clearTimeout(pendingDisconnectTimers.get(discKey));
+      const p = pendingDisconnectTimers.get(discKey);
+      clearTimeout(p?.timer || p);
       pendingDisconnectTimers.delete(discKey);
     }
 
@@ -327,6 +339,7 @@ function setupHandlers(io, socket) {
             signal
           });
           deliveredDirectly = true;
+          break;
         }
       }
     }
@@ -353,7 +366,8 @@ function setupHandlers(io, socket) {
 
     const discKey = `${roomId}:${userId}`;
     if (pendingDisconnectTimers.has(discKey)) {
-      clearTimeout(pendingDisconnectTimers.get(discKey));
+      const p = pendingDisconnectTimers.get(discKey);
+      clearTimeout(p?.timer || p);
       pendingDisconnectTimers.delete(discKey);
     }
 
@@ -382,6 +396,16 @@ function setupHandlers(io, socket) {
       .filter(uid => String(uid) !== String(userId))
       .map(uid => ({ userId: String(uid) }));
     socket.emit('webrtc_existing_voice_peers', { users: otherPeers });
+  });
+
+  // Lightweight voice presence ping (doesn't trigger peer reconnection storms)
+  socket.on('webrtc_voice_ping', async (payload = {}) => {
+    const roomId = payload.roomId || socket.roomId;
+    const userId = payload.userId || socket.userId;
+    if (roomId && userId) {
+      socket.isVoiceActive = true;
+      await addVoiceUser(roomId, userId).catch(() => {});
+    }
   });
 
   socket.on('webrtc_get_voice_users', async (payload = {}) => {
@@ -502,7 +526,8 @@ function setupHandlers(io, socket) {
 
         // Clear any prior timer
         if (pendingDisconnectTimers.has(disconnectKey)) {
-          clearTimeout(pendingDisconnectTimers.get(disconnectKey));
+          const p = pendingDisconnectTimers.get(disconnectKey);
+          clearTimeout(p?.timer || p);
         }
 
         const timer = setTimeout(async () => {
@@ -543,9 +568,9 @@ function setupHandlers(io, socket) {
             };
             io.to(dRoomId).emit('message', msg);
           }
-        }, 4000);
+        }, 15000);
 
-        pendingDisconnectTimers.set(disconnectKey, timer);
+        pendingDisconnectTimers.set(disconnectKey, { timer, wasVoiceActive });
       }
     }
   });
