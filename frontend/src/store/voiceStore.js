@@ -6,6 +6,19 @@ const LIVEKIT_DEFAULT_URL = 'wss://onshvideowatching-jbxlr1u5.livekit.cloud';
 const LIVEKIT_DEFAULT_KEY = 'APIaRVBdror5c2K';
 const LIVEKIT_DEFAULT_SECRET = '0jok3FQxo46YPiKzZvEuejHkfuNGz5H5gK51zbBMHoZ';
 
+function base64UrlEncode(input) {
+  const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input);
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary)
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
 async function generateClientVoiceToken({ apiKey, apiSecret, identity, name, room }) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'HS256', typ: 'JWT' };
@@ -23,13 +36,8 @@ async function generateClientVoiceToken({ apiKey, apiSecret, identity, name, roo
     },
   };
 
-  function b64Url(buf) {
-    const bin = typeof buf === 'string' ? buf : String.fromCharCode(...new Uint8Array(buf));
-    return btoa(bin).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-  }
-
-  const encHeader = b64Url(JSON.stringify(header));
-  const encPayload = b64Url(JSON.stringify(payload));
+  const encHeader = base64UrlEncode(JSON.stringify(header));
+  const encPayload = base64UrlEncode(JSON.stringify(payload));
   const data = `${encHeader}.${encPayload}`;
 
   const enc = new TextEncoder();
@@ -41,7 +49,7 @@ async function generateClientVoiceToken({ apiKey, apiSecret, identity, name, roo
     ['sign']
   );
   const sigBuf = await window.crypto.subtle.sign('HMAC', key, enc.encode(data));
-  const signature = b64Url(sigBuf);
+  const signature = base64UrlEncode(sigBuf);
 
   return `${data}.${signature}`;
 }
