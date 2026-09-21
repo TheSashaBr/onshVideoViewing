@@ -1,14 +1,19 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, forwardRef } from 'react';
 import { useRoomStore } from '../../store/roomStore';
 
-export default function DzenPlayer({
+// No forwardRef API is implemented here (Dzen exposes no reliable postMessage
+// API to poll position or seek), but the component is still wrapped in
+// forwardRef so Player.jsx can attach a ref to every platform uniformly
+// without React warning about refs on plain function components.
+const DzenPlayer = forwardRef(function DzenPlayer({
   videoId,
   roomState,
   onPlay,
   onPause,
   onSeek,
   onError,
-}) {
+  onTimeUpdate,
+}, ref) {
   const iframeRef = useRef(null);
   const isReadyRef = useRef(false);
   const hasSyncedOnce = useRef(false);
@@ -53,4 +58,6 @@ export default function DzenPlayer({
       </div>
     </div>
   );
-}
+});
+
+export default DzenPlayer;

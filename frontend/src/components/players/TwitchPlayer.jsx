@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useRoomStore } from '../../store/roomStore';
 
-export default function TwitchPlayer({
+const TwitchPlayer = forwardRef(function TwitchPlayer({
   videoId,
   twitchType = 'channel',
   roomState,
@@ -9,7 +9,8 @@ export default function TwitchPlayer({
   onPause,
   onSeek,
   onError,
-}) {
+  onTimeUpdate,
+}, ref) {
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const ignoreEventsUntil = useRef(0);
@@ -163,9 +164,34 @@ export default function TwitchPlayer({
     }
   }, [lastRemoteAction, twitchType]);
 
+  // Report playback position for the drift indicator. Only VODs ("video") have
+  // a meaningful timeline — live channel streams have no fixed position.
+  useEffect(() => {
+    if (twitchType !== 'video') return;
+    const interval = setInterval(() => {
+      if (!isReadyRef.current || !playerRef.current) return;
+      try {
+        onTimeUpdate?.(playerRef.current.getCurrentTime());
+      } catch (e) {}
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [twitchType, onTimeUpdate]);
+
+  useImperativeHandle(ref, () => ({
+    seekLocal: (time) => {
+      if (twitchType !== 'video' || typeof time !== 'number' || isNaN(time)) return;
+      try {
+        ignoreEventsUntil.current = Date.now() + 1500;
+        playerRef.current?.seek(time);
+      } catch (e) {}
+    }
+  }), [twitchType]);
+
   return (
     <div className="w-full h-full relative bg-black">
       <div ref={containerRef} className="w-full h-full" />
     </div>
   );
-}
+});
+
+export default TwitchPlayer;

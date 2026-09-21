@@ -6,6 +6,10 @@ const {
 // In-memory map to buffer temporary mobile network blips / permission prompts
 const pendingDisconnectTimers = new Map(); // key: `${roomId}:${userId}` -> { timer: NodeJS.Timeout, wasVoiceActive: boolean }
 
+// In-memory map tracking a grace period before an absent host's role is handed off
+const pendingHostTransferTimers = new Map(); // key: roomId -> { timer: NodeJS.Timeout, hostUserId: string }
+const HOST_TRANSFER_GRACE_MS = 3 * 60 * 1000; // 3 minutes
+
 // Helper to get active members verified against connected Socket.IO sockets
 async function getLiveRoomMembers(io, roomId) {
   const socketRoom = io.sockets.adapter.rooms.get(roomId);
@@ -106,6 +110,60 @@ async function broadcastVoiceUsers(io, roomId) {
   return voiceUsersList;
 }
 
+// Hand the host role to the longest-standing remaining member if the current
+// host has not reconnected within the grace period. No-op if the host already
+// reconnected, the room is gone, or nobody else is left to take over.
+async function attemptHostTransfer(io, roomId, absentHostUserId) {
+  pendingHostTransferTimers.delete(roomId);
+  try {
+    const room = await getRoom(roomId);
+    if (!room || String(room.hostId) !== String(absentHostUserId)) return;
+
+    const socketRoom = io.sockets.adapter.rooms.get(roomId);
+    if (!socketRoom) return;
+
+    for (const sId of socketRoom) {
+      const s = io.sockets.sockets.get(sId);
+      if (s && String(s.userId) === String(absentHostUserId)) {
+        return; // host reconnected in the meantime
+      }
+    }
+
+    const members = await getMembers(roomId);
+    const candidates = members
+      .filter(m => String(m.userId) !== String(absentHostUserId))
+      .sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+    if (candidates.length === 0) return; // nobody to hand off to
+
+    const newHost = candidates[0];
+    await updateRoomState(roomId, { hostId: newHost.userId });
+    await addMember(roomId, newHost.userId, { ...newHost, isHost: true });
+
+    for (const sId of socketRoom) {
+      const s = io.sockets.sockets.get(sId);
+      if (s && String(s.userId) === String(newHost.userId)) {
+        s.isHost = true;
+      }
+    }
+
+    const updatedMembers = await getLiveRoomMembers(io, roomId);
+    io.to(roomId).emit('message', {
+      type: 'HOST_CHANGED',
+      roomId,
+      senderId: 'SERVER',
+      timestamp: Date.now(),
+      payload: {
+        newHostId: String(newHost.userId),
+        newHostNickname: newHost.nickname,
+        members: updatedMembers
+      }
+    });
+    console.log(`[HOST] Transferred host of room ${roomId} to ${newHost.userId} after ${absentHostUserId} was absent for ${HOST_TRANSFER_GRACE_MS / 1000}s`);
+  } catch (err) {
+    console.error('[HOST] Error transferring host role:', err);
+  }
+}
+
 function setupHandlers(io, socket) {
   // Simple per-socket message throttle
   let lastMessageTime = 0;
@@ -120,6 +178,15 @@ function setupHandlers(io, socket) {
     // Host status is never trusted from the client — it is derived from the
     // hostId assigned server-side at room creation (see routes/rooms.js).
     const verifiedIsHost = !!room.hostId && String(room.hostId) === String(userId);
+
+    // Cancel a pending host-transfer if the original host reconnected in time
+    if (verifiedIsHost && pendingHostTransferTimers.has(roomId)) {
+      const pending = pendingHostTransferTimers.get(roomId);
+      if (String(pending.hostUserId) === String(userId)) {
+        clearTimeout(pending.timer);
+        pendingHostTransferTimers.delete(roomId);
+      }
+    }
 
     const discKey = `${roomId}:${userId}`;
     if (pendingDisconnectTimers.has(discKey)) {
@@ -194,7 +261,9 @@ function setupHandlers(io, socket) {
       payload: {
         currentTime: currentPos,
         isPlaying: room.isPlaying === 'true',
-        playbackRate: parseFloat(room.playbackRate || 1.0)
+        playbackRate: parseFloat(room.playbackRate || 1.0),
+        controlMode: room.controlMode === 'host' ? 'host' : 'anyone',
+        isHost: verifiedIsHost
       }
     });
 
@@ -237,6 +306,24 @@ function setupHandlers(io, socket) {
             currentServerPos += Math.max(0, elapsed * parseFloat(room.playbackRate || 1.0));
           }
 
+          // GUARD: In host-only control mode, reject playback commands from
+          // non-host sockets and snap the sender back to the real room state.
+          if (room.controlMode === 'host' && !socket.isHost) {
+            socket.emit('control_denied', { action: type });
+            socket.emit('message', {
+              type: 'SYNC_STATE',
+              roomId,
+              senderId: 'SERVER',
+              timestamp: now,
+              payload: {
+                currentTime: currentServerPos,
+                isPlaying: room.isPlaying === 'true',
+                playbackRate: parseFloat(room.playbackRate || 1.0)
+              }
+            });
+            return;
+          }
+
           // GUARD: If the movie is already playing and progress > 3s,
           // ignore auto-startup events (reqPos near 0) from recently joined sockets (< 8s ago)
           const socketAge = now - (socket.joinedAt || 0);
@@ -277,7 +364,28 @@ function setupHandlers(io, socket) {
           break;
         }
           
-        case 'LOAD_VIDEO':
+        case 'LOAD_VIDEO': {
+          const room = await getRoom(roomId);
+          if (!room) return;
+
+          if (room.controlMode === 'host' && !socket.isHost) {
+            socket.emit('control_denied', { action: type });
+            socket.emit('message', {
+              type: 'LOAD_VIDEO',
+              roomId,
+              senderId: 'SERVER',
+              timestamp: now,
+              payload: {
+                videoUrl: room.videoUrl,
+                videoType: room.videoType || 'youtube',
+                currentTime: parseFloat(room.currentTime || 0),
+                isPlaying: room.isPlaying === 'true',
+                playbackRate: parseFloat(room.playbackRate || 1.0)
+              }
+            });
+            return;
+          }
+
           await updateRoomState(roomId, {
             videoUrl: payload.videoUrl,
             videoType: payload.videoType || 'youtube',
@@ -288,6 +396,7 @@ function setupHandlers(io, socket) {
           });
           io.to(roomId).emit('message', msg);
           break;
+        }
           
         case 'CHAT_MESSAGE': {
           const text = (payload.text || '').trim().slice(0, 500);
@@ -467,6 +576,20 @@ function setupHandlers(io, socket) {
     await broadcastVoiceUsers(io, socket.roomId);
   });
 
+  // Host setting: restrict playback control (play/pause/seek/load) to the host only
+  socket.on('set_control_mode', async ({ mode } = {}) => {
+    if (!socket.roomId || !socket.isHost) return;
+    const validMode = mode === 'host' ? 'host' : 'anyone';
+    await updateRoomState(socket.roomId, { controlMode: validMode });
+    io.to(socket.roomId).emit('message', {
+      type: 'CONTROL_MODE_CHANGED',
+      roomId: socket.roomId,
+      senderId: socket.userId,
+      timestamp: Date.now(),
+      payload: { controlMode: validMode }
+    });
+  });
+
   // Host moderation: Mute participant in voice call
   socket.on('host_mute_user', ({ targetUserId }) => {
     if (!socket.roomId || !socket.isHost || !targetUserId) return;
@@ -518,6 +641,16 @@ function setupHandlers(io, socket) {
         const wasVoiceActive = socket.isVoiceActive;
         const disconnectKey = `${dRoomId}:${dUserId}`;
 
+        // If the departing socket was the verified host, start a grace period
+        // before handing the role to another member (see attemptHostTransfer).
+        if (socket.isHost && !pendingHostTransferTimers.has(dRoomId)) {
+          const hostTimer = setTimeout(() => {
+            attemptHostTransfer(io, dRoomId, dUserId);
+          }, HOST_TRANSFER_GRACE_MS);
+          hostTimer.unref?.(); // background grace timer — must not keep the process alive on its own
+          pendingHostTransferTimers.set(dRoomId, { timer: hostTimer, hostUserId: dUserId });
+        }
+
         // Clear any prior timer
         if (pendingDisconnectTimers.has(disconnectKey)) {
           const p = pendingDisconnectTimers.get(disconnectKey);
@@ -563,6 +696,7 @@ function setupHandlers(io, socket) {
             io.to(dRoomId).emit('message', msg);
           }
         }, 15000);
+        timer.unref?.(); // background grace timer — must not keep the process alive on its own
 
         pendingDisconnectTimers.set(disconnectKey, { timer, wasVoiceActive });
       }

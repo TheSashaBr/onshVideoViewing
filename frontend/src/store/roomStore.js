@@ -23,6 +23,7 @@ export const useRoomStore = create((set, get) => ({
     currentTime: 0,
     isPlaying: false,
     playbackRate: 1.0,
+    controlMode: 'anyone',
     lastUpdatedAt: Date.now()
   },
   
@@ -104,6 +105,10 @@ export const useRoomStore = create((set, get) => ({
       window.dispatchEvent(new CustomEvent('onsh_host_muted'));
       showToast('Хост выключил ваш микрофон', 'warning', 4000);
     });
+
+    socket.on('control_denied', ({ action } = {}) => {
+      showToast('Управлять воспроизведением может только хост', 'warning', 3500);
+    });
     
     socket.on('message', (msg) => {
       // Once any message arrives from room, we are confirmed in room
@@ -117,7 +122,7 @@ export const useRoomStore = create((set, get) => ({
       }
 
       // Do not ignore system/room state events such as members, sync or typing
-      if (senderId === userId && !['SYNC_STATE', 'MEMBER_JOINED', 'MEMBER_LEFT', 'LOAD_VIDEO'].includes(type)) {
+      if (senderId === userId && !['SYNC_STATE', 'MEMBER_JOINED', 'MEMBER_LEFT', 'LOAD_VIDEO', 'CONTROL_MODE_CHANGED'].includes(type)) {
         return;
       }
       
@@ -229,14 +234,58 @@ export const useRoomStore = create((set, get) => ({
           break;
         case 'SYNC_STATE':
           set(state => {
-            if (state.roomState.isPlaying && (parseFloat(payload.currentTime) === 0 || !payload.currentTime)) {
-              return state;
+            // The server tells the joining/reconnecting socket its verified host
+            // status here; it must never be merged into roomState, and it must
+            // never be trusted from anyone but the server.
+            const { isHost: verifiedIsHost, ...roomStatePayload } = payload;
+            const hostPatch = (senderId === 'SERVER' && typeof verifiedIsHost === 'boolean')
+              ? { isHost: verifiedIsHost }
+              : {};
+
+            if (state.roomState.isPlaying && (parseFloat(roomStatePayload.currentTime) === 0 || !roomStatePayload.currentTime)) {
+              return hostPatch;
             }
             return {
-              roomState: { ...state.roomState, ...payload, lastUpdatedAt: timestamp }
+              ...hostPatch,
+              roomState: { ...state.roomState, ...roomStatePayload, lastUpdatedAt: timestamp }
             };
           });
           break;
+        case 'CONTROL_MODE_CHANGED':
+          set(state => ({
+            roomState: { ...state.roomState, controlMode: payload?.controlMode === 'host' ? 'host' : 'anyone' }
+          }));
+          if (senderId !== userId) {
+            showToast(
+              payload?.controlMode === 'host'
+                ? 'Хост включил режим «управляет только хост»'
+                : 'Хост разрешил управление всем участникам',
+              'info',
+              4000
+            );
+          }
+          break;
+        case 'HOST_CHANGED': {
+          const rawMembers = Array.isArray(payload?.members) ? payload.members : [];
+          const memberMap = new Map();
+          for (const m of rawMembers) {
+            if (m && m.userId) memberMap.set(String(m.userId), m);
+          }
+          const { userId: myUid } = get();
+          const iAmNewHost = !!myUid && String(myUid) === String(payload?.newHostId);
+          set({
+            members: Array.from(memberMap.values()),
+            isHost: iAmNewHost
+          });
+          showToast(
+            iAmNewHost
+              ? 'Вы стали хостом комнаты'
+              : `${payload?.newHostNickname || 'Другой участник'} теперь хост комнаты`,
+            'info',
+            5000
+          );
+          break;
+        }
       }
     });
 
@@ -331,6 +380,13 @@ export const useRoomStore = create((set, get) => ({
     get().sendMessage('TYPING_STATUS', { nickname, isTyping });
   },
 
+  setControlMode: (mode) => {
+    const { socket, isHost } = get();
+    if (socket && isHost) {
+      socket.emit('set_control_mode', { mode: mode === 'host' ? 'host' : 'anyone' });
+    }
+  },
+
   kickUser: (targetUserId) => {
     const { socket, isHost } = get();
     if (socket && isHost && targetUserId) {
@@ -369,6 +425,7 @@ export const useRoomStore = create((set, get) => ({
         currentTime: 0,
         isPlaying: false,
         playbackRate: 1.0,
+        controlMode: 'anyone',
         lastUpdatedAt: Date.now()
       }
     });

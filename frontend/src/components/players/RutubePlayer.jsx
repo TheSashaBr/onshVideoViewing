@@ -1,14 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useRoomStore } from '../../store/roomStore';
 
-export default function RutubePlayer({
+const RutubePlayer = forwardRef(function RutubePlayer({
   videoId,
   roomState,
   onPlay,
   onPause,
   onSeek,
   onError,
-}) {
+  onTimeUpdate,
+}, ref) {
   const iframeRef = useRef(null);
   const ignoreEventsUntil = useRef(Date.now() + 6000);
   const isReadyRef = useRef(false);
@@ -85,6 +86,15 @@ export default function RutubePlayer({
     }
   }, [lastRemoteAction]);
 
+  useImperativeHandle(ref, () => ({
+    seekLocal: (time) => {
+      if (typeof time !== 'number' || isNaN(time)) return;
+      ignoreEventsUntil.current = Date.now() + 1500;
+      currentRutubeTimeRef.current = time;
+      postRutubeCommand('player:setCurrentTime', { time });
+    }
+  }), []);
+
   // Listen to messages from Rutube iframe
   useEffect(() => {
     const handleMessage = (event) => {
@@ -152,6 +162,7 @@ export default function RutubePlayer({
       const rutubeTime = currentRutubeTimeRef.current;
       const prevTime = lastKnownRutubeTime.current;
       lastKnownRutubeTime.current = rutubeTime;
+      onTimeUpdate?.(rutubeTime);
 
       if (Date.now() < ignoreEventsUntil.current) {
         return;
@@ -167,7 +178,7 @@ export default function RutubePlayer({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [onSeek]);
+  }, [onSeek, onTimeUpdate]);
 
   const embedUrl = `https://rutube.ru/play/embed/${videoId}?skinColor=000000`;
 
@@ -187,4 +198,6 @@ export default function RutubePlayer({
       />
     </div>
   );
-}
+});
+
+export default RutubePlayer;

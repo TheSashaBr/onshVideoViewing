@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import YouTube from 'react-youtube';
 import { useRoomStore } from '../../store/roomStore';
 
-export default function YouTubePlayer({
+const YouTubePlayer = forwardRef(function YouTubePlayer({
   videoId,
   roomState,
   onPlay,
   onPause,
   onSeek,
   onError,
-}) {
+  onTimeUpdate,
+}, ref) {
   const playerRef = useRef(null);
   // Startup grace period: ignore player initialization events for the first 6 seconds
   const ignoreEventsUntil = useRef(Date.now() + 6000);
@@ -85,6 +86,20 @@ export default function YouTubePlayer({
     }
   }, [lastRemoteAction]);
 
+  // Expose an imperative local-only seek for the drift-correction "Sync" button.
+  // This must never broadcast to the room — only bump the ignore window so the
+  // resulting native player event isn't mistaken for a user-initiated seek.
+  useImperativeHandle(ref, () => ({
+    seekLocal: (time) => {
+      if (typeof time !== 'number' || isNaN(time)) return;
+      try {
+        ignoreEventsUntil.current = Date.now() + 2000;
+        lastKnownPlayerTime.current = time;
+        playerRef.current?.seekTo(time, true);
+      } catch (e) {}
+    }
+  }), []);
+
   const [useFallback, setUseFallback] = useState(false);
 
   const handleReady = (e) => {
@@ -140,13 +155,16 @@ export default function YouTubePlayer({
 
       if (Date.now() < ignoreEventsUntil.current) {
         try {
-          lastKnownPlayerTime.current = await player.getCurrentTime();
+          const t = await player.getCurrentTime();
+          lastKnownPlayerTime.current = t;
+          onTimeUpdate?.(t);
         } catch (e) {}
         return;
       }
 
       try {
         const playerTime = await player.getCurrentTime();
+        onTimeUpdate?.(playerTime);
         const playerState = await player.getPlayerState();
         const prevTime = lastKnownPlayerTime.current;
         lastKnownPlayerTime.current = playerTime;
@@ -164,7 +182,7 @@ export default function YouTubePlayer({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [onSeek]);
+  }, [onSeek, onTimeUpdate]);
 
   const handleError = (e) => {
     console.warn('YouTube player error:', e);
@@ -226,4 +244,6 @@ export default function YouTubePlayer({
       />
     </div>
   );
-}
+});
+
+export default YouTubePlayer;

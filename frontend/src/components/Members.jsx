@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useRoomStore } from '../store/roomStore';
 import { useVoiceStore } from '../store/voiceStore';
-import { Users, Crown, Mic, MicOff, UserX, Check, X, ShieldAlert } from 'lucide-react';
+import { Users, Crown, Mic, MicOff, UserX, Check, X, ShieldAlert, Lock, Unlock } from 'lucide-react';
 import VoiceChat, { VoiceEqualizer } from './VoiceChat';
 import { MemberCardSkeleton } from './Skeleton';
 import { cn } from '../utils/cn';
@@ -32,6 +32,8 @@ export default function Members() {
   const isHost = useRoomStore(state => state.isHost);
   const kickUser = useRoomStore(state => state.kickUser);
   const hostMuteUser = useRoomStore(state => state.hostMuteUser);
+  const controlMode = useRoomStore(state => state.roomState.controlMode);
+  const setControlMode = useRoomStore(state => state.setControlMode);
 
   const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
   const talkingUsers = useVoiceStore(state => state.talkingUsers);
@@ -66,6 +68,55 @@ export default function Members() {
       {/* Voice Chat Section */}
       <div className="p-3.5 border-b border-border-subtle shrink-0">
         <VoiceChat variant="panel" />
+      </div>
+
+      {/* Playback Control Mode */}
+      <div className="px-3.5 py-3 border-b border-border-subtle shrink-0">
+        {isHost ? (
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs text-gray-300 font-medium min-w-0">
+              {controlMode === 'host' ? (
+                <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              ) : (
+                <Unlock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+              )}
+              <span className="truncate">Кто управляет видео</span>
+            </div>
+            <div className="flex items-center gap-1 bg-surface-raised/80 border border-border-subtle rounded-full p-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setControlMode('anyone')}
+                className={cn(
+                  'px-2.5 py-1 rounded-full text-[11px] font-semibold transition cursor-pointer',
+                  controlMode !== 'host'
+                    ? 'bg-accent text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-200'
+                )}
+              >
+                Все
+              </button>
+              <button
+                type="button"
+                onClick={() => setControlMode('host')}
+                className={cn(
+                  'px-2.5 py-1 rounded-full text-[11px] font-semibold transition cursor-pointer',
+                  controlMode === 'host'
+                    ? 'bg-amber-500 text-black shadow-sm'
+                    : 'text-gray-400 hover:text-gray-200'
+                )}
+              >
+                Только хост
+              </button>
+            </div>
+          </div>
+        ) : (
+          controlMode === 'host' && (
+            <div className="flex items-center gap-1.5 text-[11px] text-amber-300/90">
+              <Lock className="w-3.5 h-3.5 shrink-0" />
+              <span>Видео управляет только хост комнаты</span>
+            </div>
+          )
+        )}
       </div>
 
       {/* Members Section Header */}

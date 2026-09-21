@@ -63,12 +63,13 @@ export default function Room() {
   const roomState = useRoomStore(state => state.roomState);
   const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
 
-  // Persist host token across page refreshes
+  // Persist host token in localStorage (not sessionStorage) so host rights
+  // survive closing the tab/browser on this device, not just a page refresh.
   const hostTokenFromState = location.state?.hostToken;
   if (hostTokenFromState && roomId) {
-    sessionStorage.setItem(`onsh_host_${roomId}`, hostTokenFromState);
+    localStorage.setItem(`onsh_host_${roomId}`, hostTokenFromState);
   }
-  const hostToken = hostTokenFromState || sessionStorage.getItem(`onsh_host_${roomId}`);
+  const hostToken = hostTokenFromState || localStorage.getItem(`onsh_host_${roomId}`);
   const isHost = !!hostToken;
 
   useEffect(() => {

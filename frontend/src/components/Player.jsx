@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRoomStore } from '../store/roomStore';
 import { parseVideoUrl } from '../utils/urlHelper';
 import YouTubePlayer from './players/YouTubePlayer';
@@ -7,6 +7,7 @@ import TwitchPlayer from './players/TwitchPlayer';
 import VKVideoPlayer from './players/VKVideoPlayer';
 import DzenPlayer from './players/DzenPlayer';
 import { PlayerSkeleton } from './Skeleton';
+import { showToast } from './ToastContainer';
 import {
   Film,
   Play,
@@ -18,6 +19,8 @@ import {
   Tv,
   Crown,
   CheckCircle2,
+  Lock,
+  RefreshCw,
 } from 'lucide-react';
 
 const PLATFORMS = [
@@ -73,6 +76,12 @@ export default function Player() {
   const [inputUrl, setInputUrl] = useState('');
   const [error, setError] = useState(null);
   const [showUrlChanger, setShowUrlChanger] = useState(false);
+  const [localTime, setLocalTime] = useState(null);
+
+  const activePlayerRef = useRef(null);
+
+  const controlMode = roomState.controlMode === 'host' ? 'host' : 'anyone';
+  const canControl = controlMode !== 'host' || isHost;
 
   // Close URL Changer modal on Escape key
   useEffect(() => {
@@ -85,6 +94,33 @@ export default function Player() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showUrlChanger]);
 
+  // Reset the drift tracker whenever the loaded video changes — a fresh video
+  // has no meaningful "local time" to compare against yet.
+  useEffect(() => {
+    setLocalTime(null);
+  }, [roomState.videoUrl]);
+
+  const handleTimeUpdate = useCallback((t) => {
+    if (typeof t === 'number' && !isNaN(t)) setLocalTime(t);
+  }, []);
+
+  // Expected position derived from server state (same formula every player uses internally)
+  let expectedTime = parseFloat(roomState.currentTime || 0);
+  if (roomState.isPlaying && roomState.lastUpdatedAt) {
+    const elapsed = (Date.now() - roomState.lastUpdatedAt) / 1000;
+    expectedTime += Math.max(0, elapsed * parseFloat(roomState.playbackRate || 1.0));
+  }
+  const drift = (roomState.isPlaying && localTime != null) ? Math.abs(localTime - expectedTime) : 0;
+  const showDriftBadge = drift > 2;
+
+  const handleResync = () => {
+    if (activePlayerRef.current?.seekLocal) {
+      activePlayerRef.current.seekLocal(expectedTime);
+      setLocalTime(expectedTime);
+      showToast('Синхронизировано с комнатой', 'success', 2000);
+    }
+  };
+
   // Real-time validation of the entered URL
   const detectedPlatform = inputUrl.trim() ? parseVideoUrl(inputUrl.trim()) : null;
   const platformMeta = detectedPlatform
@@ -94,6 +130,11 @@ export default function Player() {
   const handleLoadVideo = (e) => {
     e.preventDefault();
     if (!inputUrl.trim()) return;
+
+    if (!canControl) {
+      setError('Изменение видео доступно только хосту комнаты.');
+      return;
+    }
 
     const parsed = parseVideoUrl(inputUrl);
     if (!parsed) {
@@ -170,64 +211,73 @@ export default function Player() {
             ))}
           </div>
 
-          {/* Video Input Form */}
-          <form onSubmit={handleLoadVideo} className="flex flex-col gap-3">
-            <div className="relative flex items-center">
-              <span className="absolute left-3.5 text-gray-400">
-                <Link2 className="w-4 h-4" />
-              </span>
-              <input
-                type="text"
-                aria-label="Ссылка на видео"
-                placeholder="Вставьте ссылку на YouTube, Rutube, Twitch, VK..."
-                value={inputUrl}
-                onChange={(e) => {
-                  setInputUrl(e.target.value);
-                  if (error) setError(null);
-                }}
-                className="w-full bg-surface border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl pl-10 pr-10 py-3 text-sm text-white placeholder-gray-500 outline-none transition"
-                autoFocus
-              />
-              {detectedPlatform && (
-                <span
-                  className="absolute right-3 text-emerald-400 animate-fade-in"
-                  title={`Распознано: ${platformMeta?.name || detectedPlatform.platform}`}
+          {canControl ? (
+            <>
+              {/* Video Input Form */}
+              <form onSubmit={handleLoadVideo} className="flex flex-col gap-3">
+                <div className="relative flex items-center">
+                  <span className="absolute left-3.5 text-gray-400">
+                    <Link2 className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    aria-label="Ссылка на видео"
+                    placeholder="Вставьте ссылку на YouTube, Rutube, Twitch, VK..."
+                    value={inputUrl}
+                    onChange={(e) => {
+                      setInputUrl(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    className="w-full bg-surface border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl pl-10 pr-10 py-3 text-sm text-white placeholder-gray-500 outline-none transition"
+                    autoFocus
+                  />
+                  {detectedPlatform && (
+                    <span
+                      className="absolute right-3 text-emerald-400 animate-fade-in"
+                      title={`Распознано: ${platformMeta?.name || detectedPlatform.platform}`}
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </span>
+                  )}
+                </div>
+
+                {/* Real-time recognized platform notification */}
+                {detectedPlatform && platformMeta && (
+                  <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 py-1.5 px-3 rounded-lg animate-fade-in">
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Распознана ссылка {platformMeta.name}</span>
+                  </div>
+                )}
+
+                {error && (
+                  <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs text-left flex items-start gap-2 animate-fade-in">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={!inputUrl.trim()}
+                  aria-label="Запустить видео"
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent to-indigo-600 hover:from-accent-hover hover:to-indigo-500 active:scale-[0.98] text-white font-bold py-3 px-4 rounded-xl transition duration-150 shadow-glow-accent text-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                </span>
-              )}
+                  <Play className="w-4 h-4 fill-white" />
+                  <span>Запустить видео</span>
+                </button>
+              </form>
+
+              <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-gray-500">
+                <Lightbulb className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                <span>Совет: скопируйте ссылку из адресной строки браузера или приложения</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-amber-400/10 border border-amber-400/25 text-amber-300 text-xs font-medium">
+              <Lock className="w-4 h-4 shrink-0" />
+              <span>Загрузить видео может только хост комнаты</span>
             </div>
-
-            {/* Real-time recognized platform notification */}
-            {detectedPlatform && platformMeta && (
-              <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 py-1.5 px-3 rounded-lg animate-fade-in">
-                <Check className="w-3.5 h-3.5" />
-                <span>Распознана ссылка {platformMeta.name}</span>
-              </div>
-            )}
-
-            {error && (
-              <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs text-left flex items-start gap-2 animate-fade-in">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={!inputUrl.trim()}
-              aria-label="Запустить видео"
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent to-indigo-600 hover:from-accent-hover hover:to-indigo-500 active:scale-[0.98] text-white font-bold py-3 px-4 rounded-xl transition duration-150 shadow-glow-accent text-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-            >
-              <Play className="w-4 h-4 fill-white" />
-              <span>Запустить видео</span>
-            </button>
-          </form>
-
-          <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-gray-500">
-            <Lightbulb className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
-            <span>Совет: скопируйте ссылку из адресной строки браузера или приложения</span>
-          </div>
+          )}
         </div>
       </div>
     );
@@ -258,30 +308,35 @@ export default function Player() {
       {parsedCurrent.platform === 'youtube' && (
         <YouTubePlayer
           key={`yt-${parsedCurrent.id}`}
+          ref={activePlayerRef}
           videoId={parsedCurrent.id}
           roomState={roomState}
           onPlay={handlePlay}
           onPause={handlePause}
           onSeek={handleSeek}
           onError={handleError}
+          onTimeUpdate={handleTimeUpdate}
         />
       )}
 
       {parsedCurrent.platform === 'rutube' && (
         <RutubePlayer
           key={`rutube-${parsedCurrent.id}`}
+          ref={activePlayerRef}
           videoId={parsedCurrent.id}
           roomState={roomState}
           onPlay={handlePlay}
           onPause={handlePause}
           onSeek={handleSeek}
           onError={handleError}
+          onTimeUpdate={handleTimeUpdate}
         />
       )}
 
       {parsedCurrent.platform === 'twitch' && (
         <TwitchPlayer
           key={`twitch-${parsedCurrent.id}`}
+          ref={activePlayerRef}
           videoId={parsedCurrent.id}
           twitchType={parsedCurrent.twitchType || 'channel'}
           roomState={roomState}
@@ -289,42 +344,72 @@ export default function Player() {
           onPause={handlePause}
           onSeek={handleSeek}
           onError={handleError}
+          onTimeUpdate={handleTimeUpdate}
         />
       )}
 
       {parsedCurrent.platform === 'vkvideo' && (
         <VKVideoPlayer
           key={`vk-${parsedCurrent.id}`}
+          ref={activePlayerRef}
           videoId={parsedCurrent.id}
           roomState={roomState}
           onPlay={handlePlay}
           onPause={handlePause}
           onSeek={handleSeek}
           onError={handleError}
+          onTimeUpdate={handleTimeUpdate}
         />
       )}
 
       {parsedCurrent.platform === 'dzen' && (
         <DzenPlayer
           key={`dzen-${parsedCurrent.id}`}
+          ref={activePlayerRef}
           videoId={parsedCurrent.id}
           roomState={roomState}
           onPlay={handlePlay}
           onPause={handlePause}
           onSeek={handleSeek}
           onError={handleError}
+          onTimeUpdate={handleTimeUpdate}
         />
+      )}
+
+      {/* Drift indicator + manual resync */}
+      {showDriftBadge && (
+        <div className="absolute bottom-16 sm:bottom-[4.25rem] left-3 sm:left-4 z-30 flex items-center gap-2 px-3 py-1.5 bg-amber-500/95 text-black text-xs font-semibold rounded-full shadow-xl backdrop-blur-md animate-slide-up">
+          <AlertCircle className="w-3.5 h-3.5" />
+          <span>Отставание {Math.round(drift)}с</span>
+          <button
+            onClick={handleResync}
+            className="flex items-center gap-1 px-2 py-0.5 bg-black/85 hover:bg-black text-white rounded-full transition text-[11px] font-bold cursor-pointer"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Синхронизировать</span>
+          </button>
+        </div>
       )}
 
       {/* Video controls & sync badge bar */}
       <div className="absolute bottom-3 sm:bottom-4 left-3 sm:left-4 z-20 flex items-center gap-2 select-none pointer-events-auto">
         <button
-          onClick={() => setShowUrlChanger((prev) => !prev)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised/85 hover:bg-surface-hover active:scale-95 text-xs text-gray-200 border border-border-subtle hover:border-accent/40 rounded-full backdrop-blur-md transition shadow-glass cursor-pointer"
-          title="Сменить видеоисточник"
+          onClick={() => {
+            if (!canControl) {
+              showToast('Изменение видео доступно только хосту', 'warning', 3000);
+              return;
+            }
+            setShowUrlChanger((prev) => !prev);
+          }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised/85 hover:bg-surface-hover active:scale-95 text-xs text-gray-200 border border-border-subtle hover:border-accent/40 rounded-full backdrop-blur-md transition shadow-glass cursor-pointer ${!canControl ? 'opacity-50' : ''}`}
+          title={canControl ? 'Сменить видеоисточник' : 'Изменение видео доступно только хосту'}
           aria-label="Сменить видеоисточник"
         >
-          <Link2 className="w-3.5 h-3.5 text-accent" />
+          {canControl ? (
+            <Link2 className="w-3.5 h-3.5 text-accent" />
+          ) : (
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+          )}
           <span className="font-medium text-[11px] sm:text-xs">Сменить видео</span>
         </button>
 
@@ -335,6 +420,16 @@ export default function Player() {
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           <span>Синхронно</span>
         </div>
+
+        {controlMode === 'host' && (
+          <div
+            className="hidden sm:flex items-center gap-1 px-2 py-1.5 bg-amber-400/10 border border-amber-400/25 rounded-full text-[11px] font-medium text-amber-300 backdrop-blur-md shadow-sm"
+            title="Управление видео ограничено хостом"
+          >
+            <Lock className="w-3 h-3 text-amber-400" />
+            <span>Только хост</span>
+          </div>
+        )}
 
         {isHost && (
           <div

@@ -4,7 +4,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node --test src/**/*.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,5 +17,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
   }
 }

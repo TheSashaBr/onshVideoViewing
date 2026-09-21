@@ -1,14 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useRoomStore } from '../../store/roomStore';
 
-export default function VKVideoPlayer({
+const VKVideoPlayer = forwardRef(function VKVideoPlayer({
   videoId,
   roomState,
   onPlay,
   onPause,
   onSeek,
   onError,
-}) {
+  onTimeUpdate,
+}, ref) {
   const iframeRef = useRef(null);
   const ignoreEventsUntil = useRef(Date.now() + 6000);
   const isReadyRef = useRef(false);
@@ -79,6 +80,15 @@ export default function VKVideoPlayer({
     }
   }, [lastRemoteAction]);
 
+  useImperativeHandle(ref, () => ({
+    seekLocal: (time) => {
+      if (typeof time !== 'number' || isNaN(time)) return;
+      ignoreEventsUntil.current = Date.now() + 1500;
+      currentTimeRef.current = time;
+      postCommand('seek', time);
+    }
+  }), []);
+
   // Listen to messages from VK iframe
   useEffect(() => {
     const handleMessage = (event) => {
@@ -115,6 +125,7 @@ export default function VKVideoPlayer({
       const time = currentTimeRef.current;
       const prevTime = lastKnownTime.current;
       lastKnownTime.current = time;
+      onTimeUpdate?.(time);
 
       if (Date.now() < ignoreEventsUntil.current) return;
 
@@ -126,7 +137,7 @@ export default function VKVideoPlayer({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [onSeek]);
+  }, [onSeek, onTimeUpdate]);
 
   // Build embed URL from VK video id format: -12345_67890
   const parts = videoId.split('_');
@@ -147,4 +158,6 @@ export default function VKVideoPlayer({
       />
     </div>
   );
-}
+});
+
+export default VKVideoPlayer;
