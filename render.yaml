@@ -13,3 +13,9 @@ services:
         value: 10000
       - key: REDIS_URL
         sync: false
+      - key: LIVEKIT_URL
+        value: wss://onshvideowatching-jbxlr1u5.livekit.cloud
+      - key: LIVEKIT_API_KEY
+        value: APIaRVBdror5c2K
+      - key: LIVEKIT_API_SECRET
+        sync: false
