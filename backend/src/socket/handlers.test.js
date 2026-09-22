@@ -7,6 +7,7 @@ const { io: ioClient } = require('socket.io-client');
 const { redisClient } = require('../redis/client');
 const { createRoom } = require('../redis/repository');
 const { initSocket } = require('./index');
+const { hashPassword } = require('../utils/password');
 
 // These tests exercise the real socket handlers (join_room host verification,
 // playback broadcast, control_mode enforcement) end-to-end over real Socket.IO
@@ -361,5 +362,67 @@ describe('socket handlers', () => {
 
     const denialPayload = await denied;
     assert.equal(denialPayload.action, 'QUEUE_ADD');
+  });
+
+  it('relays VIDEO_REACTION to other participants in the room', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    const guestId = uuidv4();
+    guestSocket.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    const reactionReceived = waitForMessageOfType(guestSocket, 'VIDEO_REACTION');
+    hostSocket.emit('message', {
+      type: 'VIDEO_REACTION', roomId, senderId: hostId, timestamp: Date.now(),
+      payload: { emoji: '🔥' },
+    });
+
+    const msg = await reactionReceived;
+    assert.equal(msg.payload.emoji, '🔥');
+  });
+
+  describe('room password', () => {
+    let pwRoomId;
+    let pwHostId;
+    const plainPassword = 'sekret123';
+
+    beforeEach(async () => {
+      pwHostId = uuidv4();
+      pwRoomId = uuidv4();
+      await createRoom(pwRoomId, pwHostId, hashPassword(plainPassword));
+    });
+
+    it('lets the host join a password-protected room without a password', async () => {
+      const hostSocket = connectClient();
+      await waitForEvent(hostSocket, 'connect');
+      const sync = waitForMessageOfType(hostSocket, 'SYNC_STATE');
+      hostSocket.emit('join_room', { roomId: pwRoomId, userId: pwHostId, nickname: 'Host' });
+      const payload = await sync;
+      assert.equal(payload.payload.isHost, true);
+    });
+
+    it('denies a guest with no or wrong password and lets them in with the right one', async () => {
+      const guestSocket = connectClient();
+      await waitForEvent(guestSocket, 'connect');
+      const guestId = uuidv4();
+
+      const deniedNoPassword = waitForEvent(guestSocket, 'join_denied');
+      guestSocket.emit('join_room', { roomId: pwRoomId, userId: guestId, nickname: 'Guest' });
+      const denial1 = await deniedNoPassword;
+      assert.equal(denial1.reason, 'password');
+
+      const deniedWrongPassword = waitForEvent(guestSocket, 'join_denied');
+      guestSocket.emit('join_room', { roomId: pwRoomId, userId: guestId, nickname: 'Guest', password: 'nope' });
+      const denial2 = await deniedWrongPassword;
+      assert.equal(denial2.reason, 'password');
+
+      const sync = waitForMessageOfType(guestSocket, 'SYNC_STATE');
+      guestSocket.emit('join_room', { roomId: pwRoomId, userId: guestId, nickname: 'Guest', password: plainPassword });
+      await sync; // resolves only if the join actually succeeded
+    });
   });
 });

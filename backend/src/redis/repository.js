@@ -2,10 +2,10 @@ const { redisClient } = require('./client');
 
 const ROOM_TTL = 24 * 60 * 60; // 24 hours
 
-async function createRoom(roomId, hostId) {
+async function createRoom(roomId, hostId, passwordHash = '') {
   const now = Date.now();
   const roomKey = `room:${roomId}`;
-  
+
   await redisClient.hSet(roomKey, {
     videoUrl: '',
     videoType: 'youtube',
@@ -16,9 +16,10 @@ async function createRoom(roomId, hostId) {
     lastUpdatedBy: hostId,
     hostId: hostId,
     createdAt: now,
-    controlMode: 'anyone'
+    controlMode: 'anyone',
+    passwordHash: passwordHash || ''
   });
-  
+
   await redisClient.expire(roomKey, ROOM_TTL);
   return roomId;
 }

@@ -10,14 +10,17 @@ export const useRoomStore = create((set, get) => ({
   userId: null,
   nickname: '',
   isHost: false,
+  roomPassword: '',
   members: [],
   chatMessages: [],
   queue: [], // [{ id, url, videoType, addedBy, nickname, addedAt }]
   typingUsers: {}, // { [userId]: { nickname: string, timeoutId: number } }
   lastRemoteAction: null,
+  lastReaction: null, // { emoji, senderId, id, timestamp } — ephemeral, drives the floating reaction animation
   connectionStatus: 'disconnected',
   isJoining: false,
   hasJoinedRoom: false,
+  joinError: null, // 'password' when the server rejected join_room for a wrong/missing room password
   roomState: {
     videoUrl: '',
     videoType: 'youtube',
@@ -28,7 +31,7 @@ export const useRoomStore = create((set, get) => ({
     lastUpdatedAt: Date.now()
   },
   
-  joinRoom: (roomId, userId, nickname, isHost) => {
+  joinRoom: (roomId, userId, nickname, isHost, password) => {
     const existingSocket = get().socket;
     if (existingSocket) {
       try {
@@ -44,13 +47,15 @@ export const useRoomStore = create((set, get) => ({
       reconnectionDelayMax: 5000,
       timeout: 20000,
     });
-    
+
     set({
       socket,
       roomId,
       userId,
       nickname,
       isHost: !!isHost,
+      roomPassword: password || '',
+      joinError: null,
       members: [{ userId, nickname, isHost: !!isHost, joinedAt: Date.now() }],
       isJoining: true,
       hasJoinedRoom: false
@@ -58,8 +63,8 @@ export const useRoomStore = create((set, get) => ({
 
     // Immediately bind room voice listeners on the socket so no voice events are missed
     useVoiceStore.getState().initVoiceRoomListeners(socket, roomId);
-    
-    socket.emit('join_room', { roomId, userId, nickname, isHost });
+
+    socket.emit('join_room', { roomId, userId, nickname, isHost, password });
 
     socket.on('disconnect', (reason) => {
       console.warn('Socket disconnected:', reason);
@@ -72,13 +77,14 @@ export const useRoomStore = create((set, get) => ({
 
     socket.on('connect', () => {
       set({ connectionStatus: 'connected' });
-      const { roomId: currentRoom, userId: currentUid, nickname: currentNick, isHost: currentHost } = get();
+      const { roomId: currentRoom, userId: currentUid, nickname: currentNick, isHost: currentHost, roomPassword } = get();
       if (currentRoom && currentUid) {
         socket.emit('join_room', {
           roomId: currentRoom,
           userId: currentUid,
           nickname: currentNick,
-          isHost: currentHost
+          isHost: currentHost,
+          password: roomPassword
         });
         // If user is currently in voice, restore voice presence on server
         if (useVoiceStore.getState().isInVoice) {
@@ -90,6 +96,15 @@ export const useRoomStore = create((set, get) => ({
         } else {
           socket.emit('webrtc_get_voice_users', { roomId: currentRoom });
         }
+      }
+    });
+
+    socket.on('join_denied', ({ reason } = {}) => {
+      set({ isJoining: false, hasJoinedRoom: false, joinError: reason || 'unknown' });
+      if (reason === 'password') {
+        showToast('Неверный пароль комнаты', 'error', 4000);
+      } else {
+        showToast('Не удалось войти в комнату', 'error', 4000);
       }
     });
 
@@ -269,6 +284,11 @@ export const useRoomStore = create((set, get) => ({
         case 'QUEUE_STATE':
           set({ queue: Array.isArray(payload?.queue) ? payload.queue : [] });
           break;
+        case 'VIDEO_REACTION':
+          if (payload?.emoji) {
+            set({ lastReaction: { emoji: payload.emoji, senderId, id: Math.random(), timestamp: Date.now() } });
+          }
+          break;
         case 'HOST_CHANGED': {
           const rawMembers = Array.isArray(payload?.members) ? payload.members : [];
           const memberMap = new Map();
@@ -384,6 +404,14 @@ export const useRoomStore = create((set, get) => ({
     get().sendMessage('TYPING_STATUS', { nickname, isTyping });
   },
 
+  sendReaction: (emoji) => {
+    const { userId } = get();
+    get().sendMessage('VIDEO_REACTION', { emoji });
+    // The server only relays reactions to other sockets, so the sender needs
+    // to trigger their own floating animation locally.
+    set({ lastReaction: { emoji, senderId: userId, id: Math.random(), timestamp: Date.now() } });
+  },
+
   addToQueue: (url, videoType = 'youtube') => {
     const { nickname } = get();
     get().sendMessage('QUEUE_ADD', { url, videoType, nickname });
@@ -430,11 +458,14 @@ export const useRoomStore = create((set, get) => ({
       userId: null,
       nickname: '',
       isHost: false,
+      roomPassword: '',
+      joinError: null,
       members: [],
       chatMessages: [],
       queue: [],
       typingUsers: {},
       lastRemoteAction: null,
+      lastReaction: null,
       isJoining: false,
       hasJoinedRoom: false,
       roomState: {

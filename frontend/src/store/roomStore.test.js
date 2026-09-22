@@ -215,4 +215,45 @@ describe('roomStore', () => {
     expect(socket.emitted[0].payload.payload).toMatchObject({ url: 'https://youtu.be/aaaaaaaaaaa', videoType: 'youtube' });
     expect(socket.emitted[1].payload.payload).toEqual({ itemId: 'item-1' });
   });
+
+  it('sets lastReaction on an incoming VIDEO_REACTION and when sending one locally', () => {
+    const socket = joinAndGetSocket(false);
+
+    socket.trigger('message', {
+      type: 'VIDEO_REACTION',
+      roomId: 'room1',
+      senderId: 'user2',
+      timestamp: Date.now(),
+      payload: { emoji: '🔥' },
+    });
+    expect(useRoomStore.getState().lastReaction).toMatchObject({ emoji: '🔥', senderId: 'user2' });
+
+    socket.emitted.length = 0;
+    useRoomStore.getState().sendReaction('🎬');
+    expect(socket.emitted[0].payload).toMatchObject({ type: 'VIDEO_REACTION', payload: { emoji: '🎬' } });
+    expect(useRoomStore.getState().lastReaction).toMatchObject({ emoji: '🎬', senderId: 'user1' });
+  });
+
+  it('sets joinError on join_denied and surfaces a toast', () => {
+    const socket = joinAndGetSocket(false);
+
+    socket.trigger('join_denied', { reason: 'password' });
+
+    const state = useRoomStore.getState();
+    expect(state.joinError).toBe('password');
+    expect(state.isJoining).toBe(false);
+    expect(state.hasJoinedRoom).toBe(false);
+    expect(showToast).toHaveBeenCalled();
+  });
+
+  it('includes the password in join_room and re-sends it on reconnect', () => {
+    useRoomStore.getState().joinRoom('room1', 'user1', 'Alice', false, 'sekret');
+    const socket = lastCreatedSocket;
+
+    expect(socket.emitted[0].payload).toMatchObject({ password: 'sekret' });
+
+    socket.emitted.length = 0;
+    socket.trigger('connect');
+    expect(socket.emitted[0].payload).toMatchObject({ password: 'sekret' });
+  });
 });

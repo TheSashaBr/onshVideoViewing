@@ -21,8 +21,10 @@ import {
   Tv,
   ArrowRight,
   X,
+  Lock,
 } from 'lucide-react';
 import { showToast } from '../components/ToastContainer';
+import { getApiUrl } from '../utils/api';
 
 const AVATARS = ['🍿', '😎', '🎬', '🤖', '🦊', '🐱', '🐼', '🚀', '🌟', '🎧', '🎮', '🔥'];
 
@@ -50,6 +52,8 @@ export default function Room() {
   const [isManualCinemaMode, setIsManualCinemaMode] = useState(false);
   const [showFloatingChat, setShowFloatingChat] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [roomPasswordInput, setRoomPasswordInput] = useState('');
+  const [roomHasPassword, setRoomHasPassword] = useState(false);
 
   const containerRef = useRef(null);
   const joinRoom = useRoomStore(state => state.joinRoom);
@@ -61,6 +65,7 @@ export default function Room() {
   const isJoining = useRoomStore(state => state.isJoining);
   const hasJoinedRoom = useRoomStore(state => state.hasJoinedRoom);
   const roomState = useRoomStore(state => state.roomState);
+  const joinError = useRoomStore(state => state.joinError);
   const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
 
   // Persist host token in localStorage (not sessionStorage) so host rights
@@ -71,6 +76,34 @@ export default function Room() {
   }
   const hostToken = hostTokenFromState || localStorage.getItem(`onsh_host_${roomId}`);
   const isHost = !!hostToken;
+
+  // The host never needs a password (they set it); find out up front for
+  // everyone else whether this room requires one, so the field shows before
+  // a failed join round-trip.
+  useEffect(() => {
+    if (isHost || !roomId) return;
+    let cancelled = false;
+    fetch(`${getApiUrl()}/api/rooms/${roomId}`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (!cancelled && data) setRoomHasPassword(!!data.hasPassword);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [roomId, isHost]);
+
+  // Server rejected the join because of a wrong/missing password — bounce
+  // back to the join form (with the password field now known to be needed)
+  // instead of getting stuck on the "Входим в комнату..." loading overlay.
+  useEffect(() => {
+    if (joinError === 'password') {
+      setRoomHasPassword(true);
+      try {
+        sessionStorage.removeItem(`onsh_joined_${roomId}`);
+      } catch (e) {}
+      setHasJoined(false);
+    }
+  }, [joinError, roomId]);
 
   useEffect(() => {
     return () => {
@@ -221,7 +254,7 @@ export default function Room() {
     const fullNickname = hasEmojiPrefix ? cleanNick : `${selectedAvatar} ${cleanNick}`;
     const userId = hostToken || getOrCreateGuestId(roomId);
     sessionStorage.setItem(`onsh_joined_${roomId}`, 'true');
-    joinRoom(roomId, userId, fullNickname, isHost);
+    joinRoom(roomId, userId, fullNickname, isHost, roomPasswordInput.trim());
     setHasJoined(true);
   };
 
@@ -383,9 +416,37 @@ export default function Room() {
               </div>
             </div>
 
+            {/* Room Password (only when the room actually requires one) */}
+            {roomHasPassword && (
+              <div className="animate-fade-in">
+                <label htmlFor="room-password-input" className="block text-xs font-medium text-gray-400 mb-1.5">
+                  Пароль комнаты
+                </label>
+                <div className="relative flex items-center">
+                  <span className="absolute left-3.5 text-gray-400">
+                    <Lock className="w-4 h-4" />
+                  </span>
+                  <input
+                    id="room-password-input"
+                    type="password"
+                    value={roomPasswordInput}
+                    onChange={(e) => setRoomPasswordInput(e.target.value)}
+                    placeholder="Введите пароль"
+                    maxLength={100}
+                    aria-label="Пароль комнаты"
+                    className="w-full bg-white/[0.04] border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition"
+                    required
+                  />
+                </div>
+                {joinError === 'password' && (
+                  <p className="mt-1.5 text-xs text-red-400">Неверный пароль, попробуйте ещё раз.</p>
+                )}
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={isJoining || !nickname.trim()}
+              disabled={isJoining || !nickname.trim() || (roomHasPassword && !roomPasswordInput.trim())}
               className="w-full group flex items-center justify-center gap-2 bg-gradient-to-r from-white via-gray-100 to-white text-black active:scale-[0.98] py-3.5 rounded-xl font-bold shadow-lg transition duration-150 text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isJoining ? (
@@ -443,7 +504,7 @@ export default function Room() {
             onClick={() => {
               const fullNickname = `${selectedAvatar} ${nickname.trim()}`;
               const userId = hostToken || getOrCreateGuestId(roomId);
-              joinRoom(roomId, userId, fullNickname, isHost);
+              joinRoom(roomId, userId, fullNickname, isHost, roomPasswordInput.trim());
             }}
             className="ml-2 px-2.5 py-0.5 bg-white text-red-600 rounded-lg text-[11px] font-bold hover:bg-gray-100 transition active:scale-95 cursor-pointer"
           >

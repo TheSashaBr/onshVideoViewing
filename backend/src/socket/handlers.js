@@ -4,6 +4,7 @@ const {
   addChatMessage, getChatMessages, addVoiceUser, removeVoiceUser, getVoiceUsers,
   addQueueItem, getQueue, removeQueueItem, popNextQueueItem
 } = require('../redis/repository');
+const { verifyPassword } = require('../utils/password');
 
 const MAX_QUEUE_SIZE = 50;
 
@@ -172,7 +173,7 @@ function setupHandlers(io, socket) {
   // Simple per-socket message throttle
   let lastMessageTime = 0;
   const MIN_MESSAGE_INTERVAL = 100; // ms
-  socket.on('join_room', async ({ roomId, userId, nickname }) => {
+  socket.on('join_room', async ({ roomId, userId, nickname, password }) => {
     const room = await getRoom(roomId);
     if (!room) {
       socket.emit('error', 'Room not found');
@@ -182,6 +183,13 @@ function setupHandlers(io, socket) {
     // Host status is never trusted from the client — it is derived from the
     // hostId assigned server-side at room creation (see routes/rooms.js).
     const verifiedIsHost = !!room.hostId && String(room.hostId) === String(userId);
+
+    // The host never needs the password (they set it); everyone else must
+    // supply the correct one before we let them join, verified server-side.
+    if (room.passwordHash && !verifiedIsHost && !verifyPassword(password, room.passwordHash)) {
+      socket.emit('join_denied', { reason: 'password' });
+      return;
+    }
 
     // Cancel a pending host-transfer if the original host reconnected in time
     if (verifiedIsHost && pendingHostTransferTimers.has(roomId)) {
@@ -542,6 +550,13 @@ function setupHandlers(io, socket) {
         }
 
         case 'TYPING_STATUS': {
+          broadcast();
+          break;
+        }
+
+        case 'VIDEO_REACTION': {
+          const emoji = (payload?.emoji || '').trim().slice(0, 8);
+          if (!emoji) return;
           broadcast();
           break;
         }

@@ -9,6 +9,7 @@ import {
   Link2,
   Sparkles,
   Radio,
+  Lock,
 } from 'lucide-react';
 import { getApiUrl } from '../utils/api';
 import { showToast } from '../components/ToastContainer';
@@ -16,15 +17,19 @@ import { showToast } from '../components/ToastContainer';
 export default function Home() {
   const [loading, setLoading] = useState(false);
   const [joinInput, setJoinInput] = useState('');
+  const [showPasswordField, setShowPasswordField] = useState(false);
+  const [password, setPassword] = useState('');
   const navigate = useNavigate();
 
   const createRoom = async () => {
     setLoading(true);
     const apiUrl = getApiUrl();
     try {
+      const trimmedPassword = password.trim();
       const res = await fetch(`${apiUrl}/api/rooms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(trimmedPassword ? { password: trimmedPassword } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data = await res.json();
@@ -164,6 +169,41 @@ export default function Home() {
                 </>
               )}
             </button>
+
+            {/* Optional room password */}
+            {showPasswordField ? (
+              <div className="flex items-center bg-surface-raised/80 border border-border-subtle focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20 rounded-2xl p-1.5 transition-all duration-200 animate-fade-in">
+                <div className="pl-3 pr-2 text-gray-400">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Пароль комнаты (необязательно)"
+                  aria-label="Пароль комнаты"
+                  maxLength={100}
+                  className="w-full bg-transparent text-sm text-white placeholder-gray-500 outline-none px-2 py-2"
+                />
+                <button
+                  type="button"
+                  onClick={() => { setShowPasswordField(false); setPassword(''); }}
+                  aria-label="Убрать пароль"
+                  className="px-3 py-2 text-xs text-gray-400 hover:text-white transition cursor-pointer shrink-0"
+                >
+                  Убрать
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowPasswordField(true)}
+                className="flex items-center justify-center gap-1.5 mx-auto text-xs text-gray-500 hover:text-gray-300 transition cursor-pointer"
+              >
+                <Lock className="w-3 h-3" />
+                <span>Защитить комнату паролем</span>
+              </button>
+            )}
 
             {/* Divider */}
             <div className="flex items-center gap-3 text-xs text-gray-500 uppercase tracking-wider">

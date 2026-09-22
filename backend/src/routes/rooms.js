@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { createRoom, getRoom } = require('../redis/repository');
+const { hashPassword } = require('../utils/password');
 
 const router = express.Router();
 
@@ -85,10 +86,16 @@ async function generateVoiceTokenHandler(req, res) {
 router.post('/', async (req, res) => {
   try {
     const roomId = uuidv4();
-    const hostId = uuidv4(); 
-    
-    await createRoom(roomId, hostId);
-    
+    const hostId = uuidv4();
+
+    const rawPassword = typeof req.body?.password === 'string' ? req.body.password.trim() : '';
+    if (rawPassword.length > 100) {
+      return res.status(400).json({ error: 'Password is too long' });
+    }
+    const passwordHash = rawPassword ? hashPassword(rawPassword) : '';
+
+    await createRoom(roomId, hostId, passwordHash);
+
     res.json({ roomId, hostToken: hostId });
   } catch (err) {
     console.error(err);
@@ -107,8 +114,8 @@ router.get('/:roomId', async (req, res) => {
     if (!room) {
       return res.status(404).json({ error: 'Room not found' });
     }
-    const { hostId: _, ...safeRoom } = room;
-    res.json(safeRoom);
+    const { hostId: _, passwordHash, ...safeRoom } = room;
+    res.json({ ...safeRoom, hasPassword: !!passwordHash });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch room' });

@@ -52,6 +52,12 @@ export default {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.6' },
         },
+        floatUp: {
+          '0%': { transform: 'translateY(0) scale(0.5)', opacity: '0' },
+          '15%': { transform: 'translateY(-10px) scale(1.1)', opacity: '1' },
+          '80%': { opacity: '1' },
+          '100%': { transform: 'translateY(-180px) scale(1)', opacity: '0' },
+        },
       },
       animation: {
         'fade-in': 'fadeIn 200ms ease-out',
@@ -59,6 +65,7 @@ export default {
         'slide-right': 'slideRight 200ms ease-out',
         'scale-in': 'scaleIn 150ms ease-out',
         'pulse-subtle': 'pulseSubtle 2s ease-in-out infinite',
+        'float-up': 'floatUp 2.5s ease-out forwards',
       },
       boxShadow: {
         glass: '0 8px 32px rgba(0, 0, 0, 0.4)',

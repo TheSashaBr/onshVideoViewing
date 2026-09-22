@@ -25,7 +25,10 @@ import {
   ListPlus,
   SkipForward,
   Trash2,
+  Smile,
 } from 'lucide-react';
+
+const QUICK_REACTIONS = ['🍿', '🔥', '😂', '❤️', '👍', '😮', '👏', '🎬'];
 
 const PLATFORMS = [
   {
@@ -81,11 +84,15 @@ export default function Player() {
   const addToQueue = useRoomStore(state => state.addToQueue);
   const removeFromQueue = useRoomStore(state => state.removeFromQueue);
   const playNextFromQueue = useRoomStore(state => state.playNextFromQueue);
+  const lastReaction = useRoomStore(state => state.lastReaction);
+  const sendReaction = useRoomStore(state => state.sendReaction);
 
   const [inputUrl, setInputUrl] = useState('');
   const [error, setError] = useState(null);
   const [showUrlChanger, setShowUrlChanger] = useState(false);
   const [localTime, setLocalTime] = useState(null);
+  const [showReactionPicker, setShowReactionPicker] = useState(false);
+  const [floatingReactions, setFloatingReactions] = useState([]);
 
   const activePlayerRef = useRef(null);
 
@@ -112,6 +119,23 @@ export default function Player() {
   const handleTimeUpdate = useCallback((t) => {
     if (typeof t === 'number' && !isNaN(t)) setLocalTime(t);
   }, []);
+
+  // Spawn a floating emoji whenever a reaction arrives (own or remote); each
+  // one removes itself once its rise-and-fade animation finishes.
+  useEffect(() => {
+    if (!lastReaction) return;
+    const left = 15 + Math.random() * 70; // percent, keeps it away from the edges
+    setFloatingReactions(prev => [...prev, { ...lastReaction, left }]);
+    const timer = setTimeout(() => {
+      setFloatingReactions(prev => prev.filter(r => r.id !== lastReaction.id));
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [lastReaction]);
+
+  const handleSendReaction = (emoji) => {
+    sendReaction(emoji);
+    setShowReactionPicker(false);
+  };
 
   // Expected position derived from server state (same formula every player uses internally)
   let expectedTime = parseFloat(roomState.currentTime || 0);
@@ -415,6 +439,48 @@ export default function Player() {
           onTimeUpdate={handleTimeUpdate}
         />
       )}
+
+      {/* Floating video reactions */}
+      <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden">
+        {floatingReactions.map((r) => (
+          <span
+            key={r.id}
+            className="absolute bottom-16 text-4xl animate-float-up select-none"
+            style={{ left: `${r.left}%` }}
+          >
+            {r.emoji}
+          </span>
+        ))}
+      </div>
+
+      {/* Reaction picker trigger — pushed up on mobile (<md) so it clears the
+          "Кино" floating action button Room.jsx renders in the same corner
+          there (that FAB is md:hidden and sits at a higher z-index). */}
+      <div className="absolute bottom-16 md:bottom-4 right-3 sm:right-4 z-20 select-none pointer-events-auto">
+        {showReactionPicker && (
+          <div className="mb-2 flex items-center gap-1 p-1.5 bg-surface-raised/95 border border-border-medium rounded-full backdrop-blur-md shadow-glass animate-scale-in">
+            {QUICK_REACTIONS.map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => handleSendReaction(emoji)}
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/[0.08] hover:scale-115 active:scale-90 transition text-base cursor-pointer"
+                aria-label={`Отправить реакцию ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          onClick={() => setShowReactionPicker((prev) => !prev)}
+          className="flex items-center justify-center w-10 h-10 bg-surface-raised/85 hover:bg-surface-hover active:scale-95 text-gray-200 border border-border-subtle hover:border-accent/40 rounded-full backdrop-blur-md transition shadow-glass cursor-pointer ml-auto"
+          title="Отправить реакцию"
+          aria-label={showReactionPicker ? 'Закрыть панель реакций' : 'Открыть панель реакций'}
+          aria-expanded={showReactionPicker}
+        >
+          <Smile className="w-4 h-4" />
+        </button>
+      </div>
 
       {/* Drift indicator + manual resync */}
       {showDriftBadge && (
