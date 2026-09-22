@@ -138,6 +138,29 @@ describe('voiceStore camera video chat', () => {
     expect(lastCreatedRoom.disconnect).not.toHaveBeenCalled();
   });
 
+  it('turns off the camera when leaving voice chat and disconnects if nothing else needs the connection', async () => {
+    await useVoiceStore.getState().joinVoice();
+    await useVoiceStore.getState().toggleCamera();
+    expect(useVoiceStore.getState().isCameraOn).toBe(true);
+
+    await useVoiceStore.getState().leaveVoice();
+
+    expect(useVoiceStore.getState().isInVoice).toBe(false);
+    expect(useVoiceStore.getState().isCameraOn).toBe(false);
+    expect(lastCreatedRoom.localParticipant.setCameraEnabled).toHaveBeenLastCalledWith(false);
+    expect(lastCreatedRoom.disconnect).toHaveBeenCalled();
+  });
+
+  it('keeps the LiveKit connection alive on leaveVoice if screen sharing is still active', async () => {
+    await useVoiceStore.getState().joinVoice();
+    useVoiceStore.setState({ isScreenSharing: true });
+
+    await useVoiceStore.getState().leaveVoice();
+
+    expect(useVoiceStore.getState().isInVoice).toBe(false);
+    expect(lastCreatedRoom.disconnect).not.toHaveBeenCalled();
+  });
+
   it('routes a Camera-source track to remoteCameraTracks and a ScreenShare-source track to remoteVideoTrack', async () => {
     await useVoiceStore.getState().toggleCamera();
 

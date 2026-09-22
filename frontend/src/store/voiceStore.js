@@ -420,7 +420,7 @@ export const useVoiceStore = create((set, get) => ({
       socket.emit('webrtc_leave_voice', { roomId, userId: myUserId });
     }
 
-    const { voiceHeartbeatInterval } = get();
+    const { voiceHeartbeatInterval, isCameraOn, livekitRoom } = get();
     if (voiceHeartbeatInterval) clearInterval(voiceHeartbeatInterval);
 
     const roomVoiceUsers = new Set(get().roomVoiceUsers);
@@ -430,23 +430,25 @@ export const useVoiceStore = create((set, get) => ({
       isInVoice: false,
       isMuted: false,
       isConnecting: false,
+      isCameraOn: false, // camera is part of the voice-chat session — leaving voice always turns it off too
       voiceHeartbeatInterval: null,
       roomVoiceUsers,
       error: null,
     });
 
-    if (get().isScreenSharing || get().isWatchingStream || get().isCameraOn) {
-      // Still connected for another reason — stop transmitting our mic but
-      // keep the connection (and everyone else's audio/video) alive.
-      const lk = get().livekitRoom;
-      if (lk && lk.localParticipant) {
+    if (livekitRoom && livekitRoom.localParticipant) {
+      try {
+        await livekitRoom.localParticipant.setMicrophoneEnabled(false);
+      } catch (e) {}
+      if (isCameraOn) {
         try {
-          await lk.localParticipant.setMicrophoneEnabled(false);
+          await livekitRoom.localParticipant.setCameraEnabled(false);
         } catch (e) {}
       }
-    } else {
-      await get().maybeDisconnectLiveKit();
     }
+
+    // Disconnects only if nothing else (screen share / stream watching) still needs the connection.
+    await get().maybeDisconnectLiveKit();
 
     showToast('Вы отключились от голосового чата', 'info');
   },

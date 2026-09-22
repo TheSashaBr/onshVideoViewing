@@ -21,7 +21,7 @@ function CameraCircle({ track, nickname, isLocal = false }) {
   }, [track]);
 
   return (
-    <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-2 border-white/25 shadow-glass bg-black shrink-0">
+    <div className="relative w-[clamp(4.5rem,6.5vw,6.5rem)] h-[clamp(4.5rem,6.5vw,6.5rem)] rounded-full overflow-hidden border-2 border-white/25 shadow-glass bg-black shrink-0">
       <video
         ref={videoRef}
         autoPlay
@@ -29,7 +29,7 @@ function CameraCircle({ track, nickname, isLocal = false }) {
         muted={isLocal}
         className={cn('w-full h-full object-cover', isLocal && 'scale-x-[-1]')}
       />
-      <span className="absolute bottom-0 inset-x-0 text-center text-[9px] sm:text-[10px] font-semibold text-white bg-black/60 truncate px-1 py-0.5">
+      <span className="absolute bottom-0 inset-x-0 text-center text-[10px] sm:text-[11px] font-semibold text-white bg-black/60 truncate px-1 py-0.5">
         {nickname}
       </span>
     </div>
@@ -54,7 +54,7 @@ export default function CameraBubbles() {
   return (
     <>
       {remoteEntries.length > 0 && (
-        <div className="absolute top-3 sm:top-4 left-1/2 -translate-x-1/2 z-[25] flex items-center gap-2 flex-wrap justify-center max-w-[90%] pointer-events-none">
+        <div className="absolute top-3 sm:top-4 left-1/2 -translate-x-1/2 z-[25] flex items-center gap-2.5 flex-wrap justify-center max-w-[90%] pointer-events-none">
           {remoteEntries.map(([userId, track]) => {
             const m = members.find(mem => String(mem.userId) === String(userId));
             return (
