@@ -61,6 +61,11 @@ export const useVoiceStore = create((set, get) => ({
   remoteVideoTrack: null,
   remoteVideoOwnerId: null,
 
+  // --- Webcam video chat (face-cam bubbles, separate from the screen-share track above) ---
+  isCameraOn: false,
+  isCameraConnecting: false,
+  remoteCameraTracks: {}, // { [userId]: Track } — one per remote participant with their camera on
+
   // Unlock audio playback if browser autoplay blocked it
   unlockAudioPlayback: async () => {
     let anySuccess = false;
@@ -216,7 +221,12 @@ export const useVoiceStore = create((set, get) => ({
           remoteAudioElements: { ...prev.remoteAudioElements, [participant.identity]: audioEl },
         }));
       } else if (track.kind === Track.Kind.Video) {
-        set({ remoteVideoTrack: track, remoteVideoOwnerId: String(participant.identity) });
+        if (publication.source === Track.Source.Camera) {
+          const pid = String(participant.identity);
+          set(prev => ({ remoteCameraTracks: { ...prev.remoteCameraTracks, [pid]: track } }));
+        } else {
+          set({ remoteVideoTrack: track, remoteVideoOwnerId: String(participant.identity) });
+        }
       }
     });
 
@@ -230,11 +240,20 @@ export const useVoiceStore = create((set, get) => ({
         });
       } else if (track.kind === Track.Kind.Video) {
         track.detach();
-        set(prev => (
-          prev.remoteVideoOwnerId === String(participant.identity)
-            ? { remoteVideoTrack: null, remoteVideoOwnerId: null }
-            : {}
-        ));
+        if (publication.source === Track.Source.Camera) {
+          const pid = String(participant.identity);
+          set(prev => {
+            const updated = { ...prev.remoteCameraTracks };
+            delete updated[pid];
+            return { remoteCameraTracks: updated };
+          });
+        } else {
+          set(prev => (
+            prev.remoteVideoOwnerId === String(participant.identity)
+              ? { remoteVideoTrack: null, remoteVideoOwnerId: null }
+              : {}
+          ));
+        }
       }
     });
 
@@ -259,7 +278,9 @@ export const useVoiceStore = create((set, get) => ({
         talkingUsers.delete(pid);
         const peerConnectionStates = { ...prev.peerConnectionStates };
         delete peerConnectionStates[pid];
-        return { talkingUsers, peerConnectionStates };
+        const remoteCameraTracks = { ...prev.remoteCameraTracks };
+        delete remoteCameraTracks[pid];
+        return { talkingUsers, peerConnectionStates, remoteCameraTracks };
       });
       if (get().remoteVideoOwnerId === pid) {
         set({ remoteVideoTrack: null, remoteVideoOwnerId: null });
@@ -277,8 +298,8 @@ export const useVoiceStore = create((set, get) => ({
 
   // Disconnects from LiveKit only once nothing needs it any more.
   maybeDisconnectLiveKit: async () => {
-    const { isInVoice, isScreenSharing, isWatchingStream, livekitRoom } = get();
-    if (isInVoice || isScreenSharing || isWatchingStream) return;
+    const { isInVoice, isScreenSharing, isWatchingStream, isCameraOn, livekitRoom } = get();
+    if (isInVoice || isScreenSharing || isWatchingStream || isCameraOn) return;
     if (livekitRoom) {
       try {
         await livekitRoom.disconnect();
@@ -312,10 +333,13 @@ export const useVoiceStore = create((set, get) => ({
       isScreenSharing: false,
       isWatchingStream: false,
       isStreamConnecting: false,
+      isCameraOn: false,
+      isCameraConnecting: false,
       livekitRoom: null,
       remoteAudioElements: {},
       remoteVideoTrack: null,
       remoteVideoOwnerId: null,
+      remoteCameraTracks: {},
       localScreenStream: null,
       screenPublications: [],
       roomVoiceUsers,
@@ -411,7 +435,7 @@ export const useVoiceStore = create((set, get) => ({
       error: null,
     });
 
-    if (get().isScreenSharing || get().isWatchingStream) {
+    if (get().isScreenSharing || get().isWatchingStream || get().isCameraOn) {
       // Still connected for another reason — stop transmitting our mic but
       // keep the connection (and everyone else's audio/video) alive.
       const lk = get().livekitRoom;
@@ -568,5 +592,43 @@ export const useVoiceStore = create((set, get) => ({
     if (!get().isWatchingStream) return;
     set({ isWatchingStream: false, remoteVideoTrack: null, remoteVideoOwnerId: null });
     await get().maybeDisconnectLiveKit();
+  },
+
+  // --- Webcam video chat ---
+
+  toggleCamera: async () => {
+    if (get().isCameraConnecting) return;
+
+    if (get().isCameraOn) {
+      const lk = get().livekitRoom;
+      if (lk && lk.localParticipant) {
+        try {
+          await lk.localParticipant.setCameraEnabled(false);
+        } catch (e) {}
+      }
+      set({ isCameraOn: false });
+      await get().maybeDisconnectLiveKit();
+      return;
+    }
+
+    set({ isCameraConnecting: true });
+    try {
+      const room = await get().ensureLiveKitConnected();
+      await room.localParticipant.setCameraEnabled(true);
+      set({ isCameraOn: true, isCameraConnecting: false });
+    } catch (err) {
+      console.error('Error enabling camera:', err);
+      let message = 'Не удалось включить камеру';
+      if (err.name === 'NotAllowedError') {
+        message = 'Доступ к камере заблокирован в браузере';
+      } else if (err.name === 'NotFoundError') {
+        message = 'Камера не найдена на устройстве';
+      } else if (err.message) {
+        message = err.message;
+      }
+      set({ isCameraConnecting: false });
+      showToast(message, 'error');
+      get().maybeDisconnectLiveKit();
+    }
   },
 }));

@@ -7,6 +7,7 @@ import Player from '../components/Player';
 import Chat from '../components/Chat';
 import Members from '../components/Members';
 import VoiceChat from '../components/VoiceChat';
+import CameraBubbles from '../components/CameraBubbles';
 import {
   Share2,
   Minimize2,
@@ -628,6 +629,8 @@ export default function Room() {
           }`}
         >
           <Player />
+
+          <CameraBubbles />
 
           {/* Mobile Floating Cinema Mode Button (FAB) */}
           {!isCinemaMode && (

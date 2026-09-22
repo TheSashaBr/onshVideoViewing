@@ -1,7 +1,7 @@
 import React from 'react';
 import { useVoiceStore } from '../store/voiceStore';
 import { useRoomStore } from '../store/roomStore';
-import { Mic, MicOff, PhoneCall, PhoneOff, Loader2, Volume2, Radio, RefreshCw } from 'lucide-react';
+import { Mic, MicOff, PhoneCall, PhoneOff, Loader2, Volume2, Radio, RefreshCw, Video, VideoOff } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 // Animated audio frequency equalizer bars
@@ -32,6 +32,9 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
   const toggleMute = useVoiceStore(state => state.toggleMute);
   const unlockAudioPlayback = useVoiceStore(state => state.unlockAudioPlayback);
   const retryPeerConnection = useVoiceStore(state => state.retryPeerConnection);
+  const isCameraOn = useVoiceStore(state => state.isCameraOn);
+  const isCameraConnecting = useVoiceStore(state => state.isCameraConnecting);
+  const toggleCamera = useVoiceStore(state => state.toggleCamera);
 
   const members = useRoomStore(state => state.members);
   const currentUserId = useRoomStore(state => state.userId);
@@ -324,6 +327,29 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
             )}
           </button>
 
+          {/* Camera toggle button */}
+          <button
+            onClick={toggleCamera}
+            disabled={isCameraConnecting}
+            aria-pressed={isCameraOn}
+            aria-label={isCameraOn ? 'Выключить камеру' : 'Включить камеру'}
+            className={cn(
+              'flex items-center justify-center p-2 rounded-xl transition active:scale-95 cursor-pointer border disabled:opacity-60',
+              isCameraOn
+                ? 'bg-accent/25 text-accent border-accent/40 hover:bg-accent/35'
+                : 'bg-white/[0.06] text-gray-200 border-white/[0.1] hover:bg-white/[0.12]'
+            )}
+            title={isCameraOn ? 'Выключить камеру' : 'Включить камеру'}
+          >
+            {isCameraConnecting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : isCameraOn ? (
+              <Video className="w-3.5 h-3.5" />
+            ) : (
+              <VideoOff className="w-3.5 h-3.5" />
+            )}
+          </button>
+
           {/* Leave call button */}
           <button
             onClick={leaveVoice}
@@ -428,6 +454,29 @@ export default function VoiceChat({ variant = 'pill', compact = false }) {
           <MicOff className="w-3.5 h-3.5 text-red-400" />
         ) : (
           <Mic className="w-3.5 h-3.5 text-emerald-400" />
+        )}
+      </button>
+
+      {/* Camera Toggle */}
+      <button
+        onClick={toggleCamera}
+        disabled={isCameraConnecting}
+        aria-pressed={isCameraOn}
+        aria-label={isCameraOn ? 'Выключить камеру' : 'Включить камеру'}
+        className={cn(
+          'p-1.5 rounded-lg transition active:scale-95 cursor-pointer border disabled:opacity-60',
+          isCameraOn
+            ? 'bg-accent/25 text-accent border-accent/40 hover:bg-accent/35'
+            : 'bg-white/[0.08] text-gray-200 hover:bg-white/[0.15] border-white/[0.08]'
+        )}
+        title={isCameraOn ? 'Выключить камеру' : 'Включить камеру'}
+      >
+        {isCameraConnecting ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : isCameraOn ? (
+          <Video className="w-3.5 h-3.5" />
+        ) : (
+          <VideoOff className="w-3.5 h-3.5" />
         )}
       </button>
 
