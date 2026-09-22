@@ -413,6 +413,29 @@ function setupHandlers(io, socket) {
             return;
           }
 
+          // Guard against two members starting a local screen/tab stream at
+          // once: if the room already has an active stream from someone
+          // else, reject — unless that presenter is no longer actually
+          // connected (stale state), in which case let the new one take over.
+          if (payload.videoType === 'local-stream' && room.videoType === 'local-stream'
+              && room.lastUpdatedBy && String(room.lastUpdatedBy) !== String(senderId)) {
+            const socketRoom = io.sockets.adapter.rooms.get(roomId);
+            let previousPresenterConnected = false;
+            if (socketRoom) {
+              for (const sId of socketRoom) {
+                const s = io.sockets.sockets.get(sId);
+                if (s && String(s.userId) === String(room.lastUpdatedBy)) {
+                  previousPresenterConnected = true;
+                  break;
+                }
+              }
+            }
+            if (previousPresenterConnected) {
+              socket.emit('stream_conflict', {});
+              return;
+            }
+          }
+
           await updateRoomState(roomId, {
             videoUrl: payload.videoUrl,
             videoType: payload.videoType || 'youtube',
@@ -540,13 +563,27 @@ function setupHandlers(io, socket) {
         case 'CHAT_MESSAGE': {
           const text = (payload.text || '').trim().slice(0, 500);
           if (!text) break;
-          await addChatMessage(roomId, {
+
+          let replyTo = null;
+          if (payload.replyTo && typeof payload.replyTo === 'object') {
+            const replyId = payload.replyTo.id ? String(payload.replyTo.id).slice(0, 100) : null;
+            const replyText = String(payload.replyTo.text || '').slice(0, 200);
+            const replyNickname = String(payload.replyTo.nickname || 'Аноним').slice(0, 30);
+            if (replyId && replyText) {
+              replyTo = { id: replyId, nickname: replyNickname, text: replyText };
+            }
+          }
+
+          const chatMsg = {
+            id: uuidv4(),
             senderId,
             nickname: (payload.nickname || 'Аноним').slice(0, 30),
             text,
+            replyTo,
             ts: timestamp
-          });
-          msg = { ...msg, payload: { ...payload, text, nickname: (payload.nickname || 'Аноним').slice(0, 30) } };
+          };
+          await addChatMessage(roomId, chatMsg);
+          msg = { ...msg, payload: { ...payload, ...chatMsg } };
           broadcast();
           break;
         }
@@ -720,6 +757,66 @@ function setupHandlers(io, socket) {
     });
 
     await broadcastVoiceUsers(io, socket.roomId);
+  });
+
+  // Host action: hand host privileges to a specific member of your choosing
+  // (as opposed to the automatic transfer that only kicks in after the host
+  // has been disconnected for HOST_TRANSFER_GRACE_MS).
+  socket.on('transfer_host', async ({ targetUserId } = {}) => {
+    if (!socket.roomId || !socket.isHost || !targetUserId) return;
+    if (String(targetUserId) === String(socket.userId)) return; // already host
+
+    const roomId = socket.roomId;
+    const socketRoom = io.sockets.adapter.rooms.get(roomId);
+    let targetConnected = false;
+    if (socketRoom) {
+      for (const sId of socketRoom) {
+        const s = io.sockets.sockets.get(sId);
+        if (s && String(s.userId) === String(targetUserId)) {
+          targetConnected = true;
+          break;
+        }
+      }
+    }
+    if (!targetConnected) return; // target must currently be an active member
+
+    const members = await getMembers(roomId);
+    const targetMember = members.find(m => String(m.userId) === String(targetUserId));
+    if (!targetMember) return;
+
+    await updateRoomState(roomId, { hostId: targetUserId });
+    await addMember(roomId, targetUserId, { ...targetMember, isHost: true });
+    await addMember(roomId, socket.userId, { nickname: socket.nickname, joinedAt: socket.joinedAt, isHost: false });
+
+    // A manual handoff supersedes any pending auto-transfer for this room
+    if (pendingHostTransferTimers.has(roomId)) {
+      const pending = pendingHostTransferTimers.get(roomId);
+      clearTimeout(pending.timer);
+      pendingHostTransferTimers.delete(roomId);
+    }
+
+    socket.isHost = false;
+    if (socketRoom) {
+      for (const sId of socketRoom) {
+        const s = io.sockets.sockets.get(sId);
+        if (s && String(s.userId) === String(targetUserId)) {
+          s.isHost = true;
+        }
+      }
+    }
+
+    const updatedMembers = await getLiveRoomMembers(io, roomId);
+    io.to(roomId).emit('message', {
+      type: 'HOST_CHANGED',
+      roomId,
+      senderId: 'SERVER',
+      timestamp: Date.now(),
+      payload: {
+        newHostId: String(targetUserId),
+        newHostNickname: targetMember.nickname,
+        members: updatedMembers
+      }
+    });
   });
 
   // Host setting: restrict playback control (play/pause/seek/load) to the host only

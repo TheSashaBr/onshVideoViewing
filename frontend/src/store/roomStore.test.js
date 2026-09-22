@@ -287,4 +287,44 @@ describe('roomStore', () => {
     useRoomStore.getState().loadVideo('', 'youtube');
     expect(useRoomStore.getState().roomState.videoOwnerId).toBeNull();
   });
+
+  it('carries replyTo through an incoming CHAT_MESSAGE', () => {
+    const socket = joinAndGetSocket(false);
+
+    socket.trigger('message', {
+      type: 'CHAT_MESSAGE',
+      roomId: 'room1',
+      senderId: 'user2',
+      timestamp: Date.now(),
+      payload: {
+        id: 'msg-2',
+        nickname: 'Bob',
+        text: 'Согласен!',
+        replyTo: { id: 'msg-1', nickname: 'Alice', text: 'Го смотреть?' },
+      },
+    });
+
+    const messages = useRoomStore.getState().chatMessages;
+    const last = messages[messages.length - 1];
+    expect(last).toMatchObject({
+      id: 'msg-2',
+      userId: 'user2',
+      text: 'Согласен!',
+      replyTo: { id: 'msg-1', nickname: 'Alice', text: 'Го смотреть?' },
+    });
+  });
+
+  it('includes replyTo when sending a chat message locally', () => {
+    const socket = joinAndGetSocket(false);
+    socket.emitted.length = 0;
+
+    useRoomStore.getState().sendChat('Го!', { id: 'msg-1', nickname: 'Alice', text: 'Го смотреть?' });
+
+    expect(socket.emitted[0].payload.payload).toMatchObject({
+      text: 'Го!',
+      replyTo: { id: 'msg-1', nickname: 'Alice', text: 'Го смотреть?' },
+    });
+    const messages = useRoomStore.getState().chatMessages;
+    expect(messages[messages.length - 1].replyTo).toEqual({ id: 'msg-1', nickname: 'Alice', text: 'Го смотреть?' });
+  });
 });

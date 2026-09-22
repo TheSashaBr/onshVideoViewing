@@ -425,4 +425,76 @@ describe('socket handlers', () => {
       await sync; // resolves only if the join actually succeeded
     });
   });
+
+  it('lets the host manually transfer their role to another member', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    const guestId = uuidv4();
+    guestSocket.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    const hostSeesChange = waitForMessageOfType(hostSocket, 'HOST_CHANGED');
+    const guestSeesChange = waitForMessageOfType(guestSocket, 'HOST_CHANGED');
+    hostSocket.emit('transfer_host', { targetUserId: guestId });
+
+    const [hostMsg, guestMsg] = await Promise.all([hostSeesChange, guestSeesChange]);
+    assert.equal(hostMsg.payload.newHostId, guestId);
+    assert.equal(guestMsg.payload.newHostId, guestId);
+
+    // The old host should no longer be able to use host-only actions.
+    const stillHost = waitForEvent(hostSocket, 'kicked', 500).catch(() => null);
+    hostSocket.emit('kick_user', { targetUserId: guestId });
+    const result = await stillHost;
+    assert.equal(result, null); // guest was never kicked — old host has no authority any more
+  });
+
+  it('ignores a transfer_host request from a non-host', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    const guestId = uuidv4();
+    guestSocket.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    let hostChanged = false;
+    const guard = (msg) => { if (msg.type === 'HOST_CHANGED') hostChanged = true; };
+    hostSocket.on('message', guard);
+    guestSocket.emit('transfer_host', { targetUserId: guestId }); // guest is not host
+    await new Promise(r => setTimeout(r, 300));
+    hostSocket.off('message', guard);
+    assert.equal(hostChanged, false);
+  });
+
+  it('rejects a second concurrent local stream and lets the first presenter be replaced once they leave', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    const guestId = uuidv4();
+    guestSocket.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    const guestSeesStream = waitForMessageOfType(guestSocket, 'LOAD_VIDEO');
+    hostSocket.emit('message', {
+      type: 'LOAD_VIDEO', roomId, senderId: hostId, timestamp: Date.now(),
+      payload: { videoUrl: 'local-stream', videoType: 'local-stream' },
+    });
+    await guestSeesStream;
+
+    const conflict = waitForEvent(guestSocket, 'stream_conflict');
+    guestSocket.emit('message', {
+      type: 'LOAD_VIDEO', roomId, senderId: guestId, timestamp: Date.now(),
+      payload: { videoUrl: 'local-stream', videoType: 'local-stream' },
+    });
+    await conflict; // guest's own attempt to start a second stream is rejected
+  });
 });

@@ -184,9 +184,11 @@ export const useRoomStore = create((set, get) => ({
             }
             return {
               chatMessages: [...state.chatMessages, {
+                id: payload.id,
                 userId: senderId,
                 nickname: payload.nickname,
                 text: payload.text,
+                replyTo: payload.replyTo || null,
                 ts: timestamp || Date.now()
               }].slice(-100),
               typingUsers: nextTyping
@@ -389,14 +391,16 @@ export const useRoomStore = create((set, get) => ({
     }));
   },
   
-  sendChat: (text) => {
+  sendChat: (text, replyTo) => {
     const { nickname, userId } = get();
-    get().sendMessage('CHAT_MESSAGE', { nickname, text });
+    get().sendMessage('CHAT_MESSAGE', { nickname, text, replyTo: replyTo || null });
     set(state => ({
       chatMessages: [...state.chatMessages, {
+        id: `local-${Math.random()}`,
         userId,
         nickname,
         text,
+        replyTo: replyTo || null,
         ts: Date.now()
       }].slice(-100)
     }));
@@ -439,6 +443,13 @@ export const useRoomStore = create((set, get) => ({
     const { socket, isHost } = get();
     if (socket && isHost && targetUserId) {
       socket.emit('kick_user', { targetUserId });
+    }
+  },
+
+  transferHost: (targetUserId) => {
+    const { socket, isHost } = get();
+    if (socket && isHost && targetUserId) {
+      socket.emit('transfer_host', { targetUserId });
     }
   },
 

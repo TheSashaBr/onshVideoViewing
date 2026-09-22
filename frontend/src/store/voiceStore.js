@@ -98,6 +98,18 @@ export const useVoiceStore = create((set, get) => ({
 
     socket.off('webrtc_voice_users_list');
     socket.off('webrtc_peer_left_voice');
+    socket.off('stream_conflict');
+
+    // The server rejected our LOAD_VIDEO('local-stream') because someone
+    // else is already actively presenting — stop the publish we already
+    // started rather than leaving it running in the background for nothing.
+    socket.on('stream_conflict', () => {
+      const members = useRoomStore.getState().members;
+      const ownerId = useRoomStore.getState().roomState.videoOwnerId;
+      const owner = members.find(m => String(m.userId) === String(ownerId));
+      showToast(`${owner?.nickname || 'Другой участник'} уже транслирует экран в этой комнате`, 'warning', 3500);
+      get().stopScreenShare();
+    });
 
     socket.on('webrtc_voice_users_list', ({ users }) => {
       if (Array.isArray(users)) {
@@ -439,6 +451,19 @@ export const useVoiceStore = create((set, get) => ({
 
   startScreenShare: async () => {
     if (get().isScreenSharing || get().isStreamConnecting) return;
+
+    // Fast client-side check using already-synced room state, so we don't
+    // make someone pick a screen/window just to get rejected — the server
+    // (see stream_conflict above) is still the authoritative guard for races.
+    const currentRoomState = useRoomStore.getState().roomState;
+    const myUserId = String(useRoomStore.getState().userId || '');
+    if (currentRoomState.videoType === 'local-stream' && currentRoomState.videoOwnerId
+        && String(currentRoomState.videoOwnerId) !== myUserId) {
+      const owner = useRoomStore.getState().members.find(m => String(m.userId) === String(currentRoomState.videoOwnerId));
+      showToast(`${owner?.nickname || 'Другой участник'} уже транслирует экран в этой комнате`, 'warning', 3500);
+      return;
+    }
+
     set({ isStreamConnecting: true, error: null });
 
     let displayStream = null;

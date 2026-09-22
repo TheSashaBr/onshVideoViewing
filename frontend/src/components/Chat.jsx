@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRoomStore } from '../store/roomStore';
-import { Send, Smile, ChevronDown, MessageSquare, X } from 'lucide-react';
+import { Send, Smile, ChevronDown, MessageSquare, X, Reply } from 'lucide-react';
 import { ChatMessageSkeleton } from './Skeleton';
 
 const QUICK_EMOJIS = ['🍿', '🔥', '😂', '❤️', '👍', '😮', '👏', '🎬'];
@@ -50,6 +50,7 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [replyingTo, setReplyingTo] = useState(null); // { id, nickname, text }
 
   const messages = useRoomStore(state => state.chatMessages);
   const isJoining = useRoomStore(state => state.isJoining);
@@ -137,10 +138,16 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
       typingTimeoutRef.current = null;
     }
     sendTyping(false);
-    sendChat(clean);
+    sendChat(clean, replyingTo);
     setText('');
+    setReplyingTo(null);
     setShowEmojiPicker(false);
     scrollToBottom(true);
+  };
+
+  const handleReplyTo = (msg) => {
+    const { name } = extractAvatarAndName(msg.nickname);
+    setReplyingTo({ id: msg.id, nickname: name, text: msg.text });
   };
 
   const handleSubmit = (e) => {
@@ -251,7 +258,7 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
 
             return (
               <div
-                key={i}
+                key={msg.id || i}
                 className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} ${
                   showHeader ? 'mt-2.5 first:mt-0' : 'mt-1'
                 }`}
@@ -273,26 +280,51 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
                   </div>
                 )}
 
-                {/* Message Bubble */}
-                <div
-                  className={`relative max-w-[85%] sm:max-w-[78%] px-3.5 py-2 text-xs sm:text-sm leading-relaxed break-words shadow-sm transition-all ${
-                    isMe
-                      ? 'bg-accent/20 text-white border border-accent/35 rounded-2xl rounded-tr-sm'
-                      : 'bg-surface-raised/90 text-gray-100 border border-border-subtle rounded-2xl rounded-tl-sm'
-                  }`}
-                >
-                  <div className="pr-8">{renderTextWithLinks(msg.text)}</div>
+                {/* Message row: bubble + reply trigger */}
+                <div className={`group/msg flex items-end gap-1 ${isMe ? 'flex-row-reverse' : ''}`}>
+                  {/* Message Bubble */}
+                  <div
+                    className={`relative max-w-[85%] sm:max-w-[78%] px-3.5 py-2 text-xs sm:text-sm leading-relaxed break-words shadow-sm transition-all ${
+                      isMe
+                        ? 'bg-accent/20 text-white border border-accent/35 rounded-2xl rounded-tr-sm'
+                        : 'bg-surface-raised/90 text-gray-100 border border-border-subtle rounded-2xl rounded-tl-sm'
+                    }`}
+                  >
+                    {msg.replyTo && (
+                      <div
+                        className={`mb-1.5 pl-2 border-l-2 text-[11px] leading-snug ${
+                          isMe ? 'border-accent/50 text-accent-hover/90' : 'border-white/20 text-gray-400'
+                        }`}
+                      >
+                        <div className="font-semibold truncate">{msg.replyTo.nickname}</div>
+                        <div className="truncate opacity-80">{msg.replyTo.text}</div>
+                      </div>
+                    )}
 
-                  {/* Timestamp in corner */}
-                  {timeStr && (
-                    <span
-                      className={`absolute bottom-1 right-2 text-[10px] font-mono leading-none select-none ${
-                        isMe ? 'text-accent/70' : 'text-gray-500'
-                      }`}
-                    >
-                      {timeStr}
-                    </span>
-                  )}
+                    <div className="pr-8">{renderTextWithLinks(msg.text)}</div>
+
+                    {/* Timestamp in corner */}
+                    {timeStr && (
+                      <span
+                        className={`absolute bottom-1 right-2 text-[10px] font-mono leading-none select-none ${
+                          isMe ? 'text-accent/70' : 'text-gray-500'
+                        }`}
+                      >
+                        {timeStr}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Reply trigger (appears on hover) */}
+                  <button
+                    type="button"
+                    onClick={() => handleReplyTo(msg)}
+                    aria-label={`Ответить на сообщение от ${extractAvatarAndName(msg.nickname).name}`}
+                    title="Ответить"
+                    className="shrink-0 p-1.5 rounded-lg text-gray-500 hover:text-accent hover:bg-white/[0.06] opacity-0 group-hover/msg:opacity-100 transition cursor-pointer"
+                  >
+                    <Reply className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             );
@@ -352,6 +384,25 @@ export default function Chat({ isOverlay = false, onCloseOverlay = null }) {
               {emoji}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Replying-to preview */}
+      {replyingTo && (
+        <div className="flex items-center gap-2 px-3.5 py-2 bg-surface-raised/60 border-t border-border-subtle shrink-0 animate-fade-in">
+          <Reply className="w-3.5 h-3.5 text-accent shrink-0" />
+          <div className="min-w-0 flex-1 text-[11px] leading-snug">
+            <div className="font-semibold text-accent">Ответ для {replyingTo.nickname}</div>
+            <div className="truncate text-gray-400">{replyingTo.text}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setReplyingTo(null)}
+            aria-label="Отменить ответ"
+            className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/[0.08] transition cursor-pointer shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 

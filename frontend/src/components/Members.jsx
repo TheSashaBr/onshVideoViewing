@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useRoomStore } from '../store/roomStore';
 import { useVoiceStore } from '../store/voiceStore';
-import { Users, Crown, Mic, MicOff, UserX, Check, X, ShieldAlert, Lock, Unlock } from 'lucide-react';
+import { Users, Crown, Mic, MicOff, UserX, Check, X, ShieldAlert, Lock, Unlock, ArrowLeftRight } from 'lucide-react';
 import VoiceChat, { VoiceEqualizer } from './VoiceChat';
 import { MemberCardSkeleton } from './Skeleton';
 import { cn } from '../utils/cn';
@@ -32,6 +32,7 @@ export default function Members() {
   const isHost = useRoomStore(state => state.isHost);
   const kickUser = useRoomStore(state => state.kickUser);
   const hostMuteUser = useRoomStore(state => state.hostMuteUser);
+  const transferHost = useRoomStore(state => state.transferHost);
   const controlMode = useRoomStore(state => state.roomState.controlMode);
   const setControlMode = useRoomStore(state => state.setControlMode);
 
@@ -41,6 +42,7 @@ export default function Members() {
   const isMuted = useVoiceStore(state => state.isMuted);
 
   const [confirmKickId, setConfirmKickId] = useState(null);
+  const [confirmTransferId, setConfirmTransferId] = useState(null);
 
   // Fallback: if members list is still populating, ensure current user is shown
   const displayMembers =
@@ -61,6 +63,11 @@ export default function Members() {
   const handleConfirmKick = (userId) => {
     kickUser(userId);
     setConfirmKickId(null);
+  };
+
+  const handleConfirmTransfer = (userId) => {
+    transferHost(userId);
+    setConfirmTransferId(null);
   };
 
   return (
@@ -156,6 +163,7 @@ export default function Members() {
           const isTalking = talkingUsers.has(String(m.userId)) || talkingUsers.has(m.userId);
           const { avatar, isEmoji, name } = parseAvatar(m.nickname);
           const isConfirmingKick = confirmKickId === m.userId;
+          const isConfirmingTransfer = confirmTransferId === m.userId;
 
           return (
             <li
@@ -264,6 +272,29 @@ export default function Members() {
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
+                    ) : isConfirmingTransfer ? (
+                      /* Confirmation dialog for host transfer */
+                      <div className="flex items-center gap-1 bg-surface-overlay border border-amber-500/40 p-1 rounded-xl shadow-lg animate-scale-in">
+                        <span className="text-[11px] text-amber-300 font-semibold px-1">
+                          Передать права?
+                        </span>
+                        <button
+                          onClick={() => handleConfirmTransfer(m.userId)}
+                          aria-label={`Подтвердить передачу прав хоста участнику ${name}`}
+                          className="p-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-black cursor-pointer transition active:scale-95"
+                          title="Да, передать"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setConfirmTransferId(null)}
+                          aria-label="Отмена"
+                          className="p-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] text-gray-300 cursor-pointer transition active:scale-95"
+                          title="Отмена"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     ) : (
                       <div className="flex items-center gap-1 opacity-80 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                         {/* Mute participant button if they are in voice */}
@@ -277,6 +308,16 @@ export default function Members() {
                             <MicOff className="w-3.5 h-3.5" />
                           </button>
                         )}
+
+                        {/* Transfer host role button */}
+                        <button
+                          onClick={() => setConfirmTransferId(m.userId)}
+                          aria-label={`Сделать ${name} хостом комнаты`}
+                          className="p-1.5 rounded-xl text-gray-400 hover:text-amber-400 hover:bg-amber-500/10 border border-transparent hover:border-amber-500/20 transition active:scale-95 cursor-pointer"
+                          title="Сделать хостом"
+                        >
+                          <ArrowLeftRight className="w-3.5 h-3.5" />
+                        </button>
 
                         {/* Kick user button */}
                         <button
