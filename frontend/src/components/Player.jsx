@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRoomStore } from '../store/roomStore';
+import { useVoiceStore } from '../store/voiceStore';
 import { parseVideoUrl } from '../utils/urlHelper';
 import YouTubePlayer from './players/YouTubePlayer';
 import RutubePlayer from './players/RutubePlayer';
 import TwitchPlayer from './players/TwitchPlayer';
 import VKVideoPlayer from './players/VKVideoPlayer';
 import DzenPlayer from './players/DzenPlayer';
+import LocalStreamPlayer from './players/LocalStreamPlayer';
 import { PlayerSkeleton } from './Skeleton';
 import { showToast } from './ToastContainer';
 import {
@@ -26,6 +28,7 @@ import {
   SkipForward,
   Trash2,
   Smile,
+  MonitorUp,
 } from 'lucide-react';
 
 const QUICK_REACTIONS = ['🍿', '🔥', '😂', '❤️', '👍', '😮', '👏', '🎬'];
@@ -86,6 +89,22 @@ export default function Player() {
   const playNextFromQueue = useRoomStore(state => state.playNextFromQueue);
   const lastReaction = useRoomStore(state => state.lastReaction);
   const sendReaction = useRoomStore(state => state.sendReaction);
+  const members = useRoomStore(state => state.members);
+
+  const isScreenSharing = useVoiceStore(state => state.isScreenSharing);
+  const isStreamConnecting = useVoiceStore(state => state.isStreamConnecting);
+  const startScreenShare = useVoiceStore(state => state.startScreenShare);
+  const stopScreenShare = useVoiceStore(state => state.stopScreenShare);
+
+  // If the room state moves away from "local-stream" while we're still
+  // publishing (e.g. the host force-ended our stream, or someone loaded a
+  // new video from another tab), stop actually transmitting too — otherwise
+  // we'd keep publishing to LiveKit in the background for nothing.
+  useEffect(() => {
+    if (isScreenSharing && roomState.videoType !== 'local-stream') {
+      stopScreenShare();
+    }
+  }, [isScreenSharing, roomState.videoType, stopScreenShare]);
 
   const [inputUrl, setInputUrl] = useState('');
   const [error, setError] = useState(null);
@@ -232,11 +251,98 @@ export default function Player() {
     }
   };
 
-  const parsedCurrent = parseVideoUrl(roomState.videoUrl);
+  const isLocalStream = roomState.videoType === 'local-stream';
+  const parsedCurrent = isLocalStream ? null : parseVideoUrl(roomState.videoUrl);
+
+  const handleStartScreenShare = () => {
+    if (!canControl) {
+      showToast('Транслировать экран может только хост', 'warning', 3000);
+      return;
+    }
+    startScreenShare();
+    setShowUrlChanger(false);
+  };
 
   // 1. Loading Skeleton while connecting before state is confirmed
-  if (isJoining && !parsedCurrent) {
+  if (isJoining && !parsedCurrent && !isLocalStream) {
     return <PlayerSkeleton />;
+  }
+
+  // 1b. Local video/screen stream — a live WebRTC relay, not a seekable embed
+  if (isLocalStream) {
+    const isOwner = !!roomState.videoOwnerId && String(roomState.videoOwnerId) === String(userId);
+    const owner = members.find(m => String(m.userId) === String(roomState.videoOwnerId));
+    return (
+      <div className="w-full h-full relative bg-black overflow-hidden flex items-center justify-center">
+        <LocalStreamPlayer
+          isOwner={isOwner}
+          ownerNickname={owner?.nickname}
+          onDismissEnded={canControl ? () => loadVideo('', 'youtube') : undefined}
+        />
+
+        {/* Floating video reactions */}
+        <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden">
+          {floatingReactions.map((r) => (
+            <span
+              key={r.id}
+              className="absolute bottom-16 text-4xl animate-float-up select-none"
+              style={{ left: `${r.left}%` }}
+            >
+              {r.emoji}
+            </span>
+          ))}
+        </div>
+
+        <div className="absolute bottom-16 md:bottom-4 right-3 sm:right-4 z-20 select-none pointer-events-auto">
+          {showReactionPicker && (
+            <div className="mb-2 flex items-center gap-1 p-1.5 bg-surface-raised/95 border border-border-medium rounded-full backdrop-blur-md shadow-glass animate-scale-in">
+              {QUICK_REACTIONS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => handleSendReaction(emoji)}
+                  className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/[0.08] hover:scale-115 active:scale-90 transition text-base cursor-pointer"
+                  aria-label={`Отправить реакцию ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => setShowReactionPicker((prev) => !prev)}
+            className="flex items-center justify-center w-10 h-10 bg-surface-raised/85 hover:bg-surface-hover active:scale-95 text-gray-200 border border-border-subtle hover:border-accent/40 rounded-full backdrop-blur-md transition shadow-glass cursor-pointer ml-auto"
+            title="Отправить реакцию"
+            aria-label={showReactionPicker ? 'Закрыть панель реакций' : 'Открыть панель реакций'}
+            aria-expanded={showReactionPicker}
+          >
+            <Smile className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-2">
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-600/90 border border-red-400/40 rounded-full text-[11px] font-bold text-white backdrop-blur-md shadow-sm"
+            title="Прямая трансляция — без перемотки"
+          >
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <span>Прямой эфир</span>
+          </div>
+
+          {/* Host moderation: force-end someone else's stream if needed. This
+              only clears the shared room state — the presenter's own browser
+              keeps publishing until they close the tab or stop manually. */}
+          {isHost && roomState.videoOwnerId && String(roomState.videoOwnerId) !== String(userId) && (
+            <button
+              onClick={() => loadVideo('', 'youtube')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-raised/90 hover:bg-surface-hover border border-border-subtle rounded-full text-[11px] font-semibold text-gray-200 backdrop-blur-md shadow-sm transition cursor-pointer"
+              title="Завершить трансляцию для всех"
+            >
+              <span>Завершить трансляцию</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
   }
 
   // 2. Empty State (Onboarding when no video has been loaded yet)
@@ -329,6 +435,22 @@ export default function Player() {
                   <span>Запустить видео</span>
                 </button>
               </form>
+
+              <div className="flex items-center gap-3 my-4 text-[11px] text-gray-500 uppercase tracking-wider">
+                <div className="flex-1 h-px bg-white/[0.08]" />
+                <span>или</span>
+                <div className="flex-1 h-px bg-white/[0.08]" />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleStartScreenShare}
+                disabled={isStreamConnecting}
+                className="w-full flex items-center justify-center gap-2 bg-white/[0.05] hover:bg-white/[0.09] active:scale-[0.98] border border-border-subtle hover:border-accent/40 text-white font-semibold py-3 px-4 rounded-xl transition text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <MonitorUp className="w-4 h-4 text-accent" />
+                <span>{isStreamConnecting ? 'Подключение...' : 'Транслировать экран с устройства'}</span>
+              </button>
 
               <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-gray-500">
                 <Lightbulb className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
@@ -685,6 +807,16 @@ export default function Player() {
                     </button>
                   </div>
                 </form>
+
+                <button
+                  type="button"
+                  onClick={handleStartScreenShare}
+                  disabled={isStreamConnecting}
+                  className="w-full mt-3 flex items-center justify-center gap-2 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.98] border border-border-subtle hover:border-accent/40 text-gray-200 font-medium py-2.5 px-4 rounded-xl transition text-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  <MonitorUp className="w-3.5 h-3.5 text-accent" />
+                  <span>{isStreamConnecting ? 'Подключение...' : 'Транслировать экран вместо этого'}</span>
+                </button>
               </>
             ) : (
               <div className="flex items-center gap-2 py-3 px-4 rounded-xl bg-amber-400/10 border border-amber-400/25 text-amber-300 text-xs font-medium mb-1">

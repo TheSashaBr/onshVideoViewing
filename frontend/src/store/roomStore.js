@@ -24,13 +24,14 @@ export const useRoomStore = create((set, get) => ({
   roomState: {
     videoUrl: '',
     videoType: 'youtube',
+    videoOwnerId: null, // who loaded the current video — used to identify the presenter for videoType 'local-stream'
     currentTime: 0,
     isPlaying: false,
     playbackRate: 1.0,
     controlMode: 'anyone',
     lastUpdatedAt: Date.now()
   },
-  
+
   joinRoom: (roomId, userId, nickname, isHost, password) => {
     const existingSocket = get().socket;
     if (existingSocket) {
@@ -222,6 +223,7 @@ export const useRoomStore = create((set, get) => ({
               ...state.roomState,
               videoUrl: payload.videoUrl,
               videoType: payload.videoType || 'youtube',
+              videoOwnerId: payload.videoUrl ? senderId : null,
               currentTime: payload.currentTime !== undefined ? payload.currentTime : (payload.videoUrl !== state.roomState.videoUrl ? 0 : state.roomState.currentTime),
               isPlaying: payload.isPlaying !== undefined ? payload.isPlaying : (payload.videoUrl !== state.roomState.videoUrl ? false : state.roomState.isPlaying),
               lastUpdatedAt: timestamp
@@ -372,13 +374,14 @@ export const useRoomStore = create((set, get) => ({
   },
 
   loadVideo: (videoUrl, videoType = 'youtube') => {
-    const { sendMessage } = get();
+    const { sendMessage, userId } = get();
     sendMessage('LOAD_VIDEO', { videoUrl, videoType });
     set(state => ({
       roomState: {
         ...state.roomState,
         videoUrl,
         videoType,
+        videoOwnerId: videoUrl ? userId : null,
         currentTime: 0,
         isPlaying: false,
         lastUpdatedAt: Date.now()
@@ -471,6 +474,7 @@ export const useRoomStore = create((set, get) => ({
       roomState: {
         videoUrl: '',
         videoType: 'youtube',
+        videoOwnerId: null,
         currentTime: 0,
         isPlaying: false,
         playbackRate: 1.0,

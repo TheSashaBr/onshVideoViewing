@@ -256,4 +256,35 @@ describe('roomStore', () => {
     socket.trigger('connect');
     expect(socket.emitted[0].payload).toMatchObject({ password: 'sekret' });
   });
+
+  it('tracks videoOwnerId from LOAD_VIDEO and clears it when the video is cleared', () => {
+    const socket = joinAndGetSocket(false);
+
+    socket.trigger('message', {
+      type: 'LOAD_VIDEO',
+      roomId: 'room1',
+      senderId: 'user2',
+      timestamp: Date.now(),
+      payload: { videoUrl: 'local-stream', videoType: 'local-stream' },
+    });
+    expect(useRoomStore.getState().roomState.videoOwnerId).toBe('user2');
+
+    socket.trigger('message', {
+      type: 'LOAD_VIDEO',
+      roomId: 'room1',
+      senderId: 'user2',
+      timestamp: Date.now(),
+      payload: { videoUrl: '', videoType: 'youtube' },
+    });
+    expect(useRoomStore.getState().roomState.videoOwnerId).toBeNull();
+  });
+
+  it('sets videoOwnerId to the local user when loadVideo is called optimistically', () => {
+    joinAndGetSocket(false);
+    useRoomStore.getState().loadVideo('local-stream', 'local-stream');
+    expect(useRoomStore.getState().roomState.videoOwnerId).toBe('user1');
+
+    useRoomStore.getState().loadVideo('', 'youtube');
+    expect(useRoomStore.getState().roomState.videoOwnerId).toBeNull();
+  });
 });

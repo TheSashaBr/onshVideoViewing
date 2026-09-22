@@ -248,12 +248,14 @@ function setupHandlers(io, socket) {
       currentPos += Math.max(0, elapsed * parseFloat(room.playbackRate || 1.0));
     }
 
-    // Send current room state and history to the newly connected user
+    // Send current room state and history to the newly connected user.
+    // senderId carries who actually loaded this video (falls back to 'SERVER'
+    // for older rooms) so late joiners know who owns an active local stream.
     if (room.videoUrl) {
       socket.emit('message', {
         type: 'LOAD_VIDEO',
         roomId,
-        senderId: 'SERVER',
+        senderId: room.lastUpdatedBy || 'SERVER',
         timestamp: Date.now(),
         payload: {
           videoUrl: room.videoUrl,
