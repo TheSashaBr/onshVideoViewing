@@ -169,10 +169,18 @@ async function attemptHostTransfer(io, roomId, absentHostUserId) {
   }
 }
 
+const MESSAGE_TYPES = new Set([
+  'PLAY', 'PAUSE', 'SEEK', 'LOAD_VIDEO',
+  'QUEUE_ADD', 'QUEUE_REMOVE', 'QUEUE_NEXT',
+  'CHAT_MESSAGE', 'TYPING_STATUS', 'VIDEO_REACTION',
+]);
+const MIN_MESSAGE_INTERVAL = 100; // ms, per message type
+
 function setupHandlers(io, socket) {
-  // Simple per-socket message throttle
-  let lastMessageTime = 0;
-  const MIN_MESSAGE_INTERVAL = 100; // ms
+  // Throttled per type, not per socket: different types legitimately go out
+  // back-to-back (typing-stopped right before the chat message itself, SEEK
+  // then PLAY), and a shared window silently dropped the second one.
+  const lastMessageTimeByType = new Map();
   socket.on('join_room', async ({ roomId, userId, nickname, password }) => {
     const room = await getRoom(roomId);
     if (!room) {
@@ -309,11 +317,11 @@ function setupHandlers(io, socket) {
   });
 
   socket.on('message', async (msg) => {
-    if (!msg || typeof msg !== 'object' || !msg.type || !msg.roomId) return;
+    if (!msg || typeof msg !== 'object' || !MESSAGE_TYPES.has(msg.type) || !msg.roomId) return;
     if (msg.senderId !== socket.userId) return; // Prevent spoofing
     const now_ts = Date.now();
-    if (now_ts - lastMessageTime < MIN_MESSAGE_INTERVAL) return;
-    lastMessageTime = now_ts;
+    if (now_ts - (lastMessageTimeByType.get(msg.type) || 0) < MIN_MESSAGE_INTERVAL) return;
+    lastMessageTimeByType.set(msg.type, now_ts);
     const { type, roomId, senderId, timestamp, payload } = msg;
     const broadcast = () => socket.to(roomId).emit('message', msg);
     

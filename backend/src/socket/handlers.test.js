@@ -385,6 +385,56 @@ describe('socket handlers', () => {
     assert.equal(msg.payload.emoji, '🔥');
   });
 
+  it('delivers and persists a chat message sent right after a typing-status update', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    guestSocket.emit('join_room', { roomId, userId: uuidv4(), nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    const chatReceived = waitForMessageOfType(guestSocket, 'CHAT_MESSAGE');
+    // Back-to-back in the same tick, exactly like Chat.jsx's handleSend.
+    hostSocket.emit('message', {
+      type: 'TYPING_STATUS', roomId, senderId: hostId, timestamp: Date.now(),
+      payload: { nickname: 'Host', isTyping: false },
+    });
+    hostSocket.emit('message', {
+      type: 'CHAT_MESSAGE', roomId, senderId: hostId, timestamp: Date.now(),
+      payload: { nickname: 'Host', text: 'Привет!' },
+    });
+
+    const msg = await chatReceived;
+    assert.equal(msg.payload.text, 'Привет!');
+
+    const lateSocket = connectClient();
+    await waitForEvent(lateSocket, 'connect');
+    const history = waitForEvent(lateSocket, 'chat_history');
+    lateSocket.emit('join_room', { roomId, userId: uuidv4(), nickname: 'Late' });
+    assert.deepEqual((await history).map(m => m.text), ['Привет!']);
+  });
+
+  it('still throttles a burst of the same message type', async () => {
+    const hostSocket = connectClient();
+    const guestSocket = connectClient();
+    await Promise.all([waitForEvent(hostSocket, 'connect'), waitForEvent(guestSocket, 'connect')]);
+
+    hostSocket.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+    await waitForMessageOfType(hostSocket, 'SYNC_STATE');
+    guestSocket.emit('join_room', { roomId, userId: uuidv4(), nickname: 'Guest' });
+    await waitForMessageOfType(guestSocket, 'SYNC_STATE');
+
+    const received = [];
+    guestSocket.on('message', (m) => { if (m.type === 'VIDEO_REACTION') received.push(m.payload.emoji); });
+    for (const emoji of ['🔥', '😂', '👍']) {
+      hostSocket.emit('message', { type: 'VIDEO_REACTION', roomId, senderId: hostId, timestamp: Date.now(), payload: { emoji } });
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(received, ['🔥']);
+  });
+
   describe('room password', () => {
     let pwRoomId;
     let pwHostId;
