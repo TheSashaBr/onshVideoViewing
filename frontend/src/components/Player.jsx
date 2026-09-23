@@ -10,7 +10,9 @@ import DzenPlayer from './players/DzenPlayer';
 import LocalStreamPlayer from './players/LocalStreamPlayer';
 import { PlayerSkeleton } from './Skeleton';
 import { showToast } from './ToastContainer';
+import { cn } from '../utils/cn';
 import {
+  ClipboardPaste,
   Film,
   Play,
   Link2,
@@ -75,6 +77,70 @@ const PLATFORMS = [
     hoverBg: 'hover:bg-amber-500/20',
   },
 ];
+
+const canReadClipboard = typeof navigator !== 'undefined' && !!navigator.clipboard?.readText;
+// On touch devices an autofocused field pops the on-screen keyboard over the
+// very buttons the user needs next (Вставить / Запустить), so skip it there.
+const prefersTouch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+
+function VideoUrlInput({ value, onChange, detectedName, placeholder, ariaLabel, className }) {
+  const handlePaste = async () => {
+    try {
+      const text = (await navigator.clipboard.readText()).trim();
+      if (text) {
+        onChange(text);
+      } else {
+        showToast('Буфер обмена пуст', 'info', 2000);
+      }
+    } catch (e) {
+      showToast('Нет доступа к буферу обмена — вставьте ссылку вручную', 'warning', 3000);
+    }
+  };
+
+  const showPaste = canReadClipboard && !value;
+
+  return (
+    <div className="relative flex items-center">
+      <span className="absolute left-3.5 text-gray-400">
+        <Link2 className="w-4 h-4" />
+      </span>
+      <input
+        type="text"
+        inputMode="url"
+        enterKeyHint="go"
+        autoCapitalize="off"
+        autoCorrect="off"
+        autoComplete="off"
+        spellCheck={false}
+        autoFocus={!prefersTouch}
+        aria-label={ariaLabel}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          'w-full bg-surface border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl pl-10 text-sm text-white placeholder-gray-500 outline-none transition',
+          showPaste ? 'pr-28' : 'pr-10',
+          className
+        )}
+      />
+      {showPaste ? (
+        <button
+          type="button"
+          onClick={handlePaste}
+          aria-label="Вставить ссылку из буфера обмена"
+          className="absolute right-1.5 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-accent/15 hover:bg-accent/25 active:scale-95 border border-accent/30 text-accent text-xs font-semibold transition cursor-pointer"
+        >
+          <ClipboardPaste className="w-3.5 h-3.5" />
+          <span>Вставить</span>
+        </button>
+      ) : detectedName ? (
+        <span className="absolute right-3 text-emerald-400 animate-fade-in" title={`Распознано: ${detectedName}`}>
+          <CheckCircle2 className="w-4 h-4" />
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 export default function Player() {
   const roomState = useRoomStore(state => state.roomState);
@@ -178,6 +244,11 @@ export default function Player() {
   const platformMeta = detectedPlatform
     ? PLATFORMS.find(p => p.id === detectedPlatform.platform)
     : null;
+
+  const handleUrlChange = (value) => {
+    setInputUrl(value);
+    if (error) setError(null);
+  };
 
   const handleLoadVideo = (e) => {
     e.preventDefault();
@@ -348,32 +419,34 @@ export default function Player() {
   // 2. Empty State (Onboarding when no video has been loaded yet)
   if (!parsedCurrent) {
     return (
-      <div className="flex flex-col items-center justify-center h-full w-full p-4 sm:p-6 text-center relative overflow-hidden select-none">
+      // Scrolls instead of clipping when the form is taller than the space
+      // (my-auto on the card keeps it centred whenever it does fit).
+      <div className="flex flex-col items-center h-full w-full p-3 sm:p-6 text-center relative overflow-y-auto select-none">
         {/* Ambient background glows */}
-        <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-accent/10 rounded-full blur-[100px]" />
           <div className="absolute bottom-1/4 right-1/4 w-60 h-60 bg-purple-600/10 rounded-full blur-[80px]" />
         </div>
 
-        <div className="relative z-10 bg-surface-raised/90 border border-border-subtle hover:border-border-medium transition-all p-6 sm:p-8 rounded-3xl max-w-lg w-full shadow-glass-lg backdrop-blur-xl animate-scale-in">
+        <div className="relative z-10 my-auto bg-surface-raised/90 border border-border-subtle hover:border-border-medium transition-all p-4 sm:p-8 rounded-2xl sm:rounded-3xl max-w-lg w-full shadow-glass-lg backdrop-blur-xl animate-scale-in">
           {/* Glowing Film Icon Badge */}
-          <div className="w-14 h-14 sm:w-16 sm:h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-tr from-accent/25 to-purple-500/20 border border-accent/35 flex items-center justify-center shadow-glow-accent">
-            <Film className="w-7 h-7 sm:w-8 sm:h-8 text-accent" />
+          <div className="hidden sm:flex w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-tr from-accent/25 to-purple-500/20 border border-accent/35 items-center justify-center shadow-glow-accent">
+            <Film className="w-8 h-8 text-accent" />
           </div>
 
-          <h2 className="text-xl sm:text-2xl font-bold mb-2 text-white tracking-tight">
+          <h2 className="text-lg sm:text-2xl font-bold mb-3 sm:mb-2 text-white tracking-tight">
             Что будем смотреть?
           </h2>
-          <p className="text-gray-400 text-xs sm:text-sm mb-6 max-w-sm mx-auto leading-relaxed">
+          <p className="hidden sm:block text-gray-400 text-sm mb-6 max-w-sm mx-auto leading-relaxed">
             Вставьте ссылку на ролик или прямую трансляцию для совместного синхронного просмотра
           </p>
 
           {/* Supported platform tags */}
-          <div className="flex flex-wrap justify-center gap-1.5 sm:gap-2 mb-6">
+          <div className="flex flex-wrap justify-center gap-1.5 sm:gap-2 mb-4 sm:mb-6">
             {PLATFORMS.map((platform) => (
               <span
                 key={platform.id}
-                className={`px-2.5 py-1 rounded-full text-xs font-medium border ${platform.border} ${platform.bg} ${platform.color} transition`}
+                className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-medium border ${platform.border} ${platform.bg} ${platform.color} transition`}
               >
                 {platform.name}
               </span>
@@ -384,31 +457,14 @@ export default function Player() {
             <>
               {/* Video Input Form */}
               <form onSubmit={handleLoadVideo} className="flex flex-col gap-3">
-                <div className="relative flex items-center">
-                  <span className="absolute left-3.5 text-gray-400">
-                    <Link2 className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="text"
-                    aria-label="Ссылка на видео"
-                    placeholder="Вставьте ссылку на YouTube, Rutube, Twitch, VK..."
-                    value={inputUrl}
-                    onChange={(e) => {
-                      setInputUrl(e.target.value);
-                      if (error) setError(null);
-                    }}
-                    className="w-full bg-surface border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl pl-10 pr-10 py-3 text-sm text-white placeholder-gray-500 outline-none transition"
-                    autoFocus
-                  />
-                  {detectedPlatform && (
-                    <span
-                      className="absolute right-3 text-emerald-400 animate-fade-in"
-                      title={`Распознано: ${platformMeta?.name || detectedPlatform.platform}`}
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                    </span>
-                  )}
-                </div>
+                <VideoUrlInput
+                  value={inputUrl}
+                  onChange={handleUrlChange}
+                  detectedName={detectedPlatform ? (platformMeta?.name || detectedPlatform.platform) : null}
+                  ariaLabel="Ссылка на видео"
+                  placeholder="Вставьте ссылку на видео"
+                  className="py-3"
+                />
 
                 {/* Real-time recognized platform notification */}
                 {detectedPlatform && platformMeta && (
@@ -436,7 +492,7 @@ export default function Player() {
                 </button>
               </form>
 
-              <div className="flex items-center gap-3 my-4 text-[11px] text-gray-500 uppercase tracking-wider">
+              <div className="flex items-center gap-3 my-3 sm:my-4 text-[11px] text-gray-500 uppercase tracking-wider">
                 <div className="flex-1 h-px bg-white/[0.08]" />
                 <span>или</span>
                 <div className="flex-1 h-px bg-white/[0.08]" />
@@ -452,7 +508,7 @@ export default function Player() {
                 <span>{isStreamConnecting ? 'Подключение...' : 'Транслировать экран с устройства'}</span>
               </button>
 
-              <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-gray-500">
+              <div className="hidden sm:flex mt-5 items-center justify-center gap-1.5 text-[11px] text-gray-500">
                 <Lightbulb className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
                 <span>Совет: скопируйте ссылку из адресной строки браузера или приложения</span>
               </div>
@@ -697,7 +753,7 @@ export default function Player() {
       {/* Change Video Slide-down Panel */}
       {showUrlChanger && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center pt-10 sm:pt-16 p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center pt-10 sm:pt-16 p-4 overflow-y-auto animate-in fade-in duration-200"
           onClick={() => setShowUrlChanger(false)}
           role="dialog"
           aria-modal="true"
@@ -751,28 +807,14 @@ export default function Player() {
                   }}
                   className="flex flex-col gap-3"
                 >
-                  <div className="relative flex items-center">
-                    <span className="absolute left-3.5 text-gray-400">
-                      <Link2 className="w-4 h-4" />
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="https://..."
-                      aria-label="Новая ссылка на видео"
-                      value={inputUrl}
-                      onChange={(e) => {
-                        setInputUrl(e.target.value);
-                        if (error) setError(null);
-                      }}
-                      className="w-full bg-surface border border-border-subtle focus:border-accent/60 focus:ring-2 focus:ring-accent/20 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-gray-500 outline-none transition"
-                      autoFocus
-                    />
-                    {detectedPlatform && (
-                      <span className="absolute right-3 text-emerald-400 animate-fade-in">
-                        <CheckCircle2 className="w-4 h-4" />
-                      </span>
-                    )}
-                  </div>
+                  <VideoUrlInput
+                    value={inputUrl}
+                    onChange={handleUrlChange}
+                    detectedName={detectedPlatform ? (platformMeta?.name || detectedPlatform.platform) : null}
+                    ariaLabel="Новая ссылка на видео"
+                    placeholder="https://..."
+                    className="py-2.5"
+                  />
 
                   {detectedPlatform && platformMeta && (
                     <div className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 py-1.5 px-3 rounded-lg animate-fade-in">
@@ -781,11 +823,12 @@ export default function Player() {
                     </div>
                   )}
 
-                  <div className="flex justify-end gap-2 mt-2">
+                  {/* Stacked full-width on phones (primary action on top), a row from sm: up */}
+                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-2">
                     <button
                       type="button"
                       onClick={() => setShowUrlChanger(false)}
-                      className="px-4 py-2 text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/[0.06] rounded-xl transition cursor-pointer"
+                      className="px-4 py-2.5 sm:py-2 text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/[0.06] rounded-xl transition cursor-pointer"
                     >
                       Отмена
                     </button>
@@ -793,7 +836,7 @@ export default function Player() {
                       type="button"
                       disabled={!inputUrl.trim()}
                       onClick={handleAddToQueue}
-                      className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-accent border border-accent/40 hover:bg-accent/10 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 text-xs font-semibold text-accent border border-accent/40 hover:bg-accent/10 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       <ListPlus className="w-3.5 h-3.5" />
                       <span>В очередь</span>
@@ -801,7 +844,7 @@ export default function Player() {
                     <button
                       type="submit"
                       disabled={!inputUrl.trim()}
-                      className="px-4 py-2 text-xs font-semibold bg-accent hover:bg-accent-hover text-white rounded-xl transition shadow-glow-accent disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="px-4 py-2.5 sm:py-2 text-xs font-semibold bg-accent hover:bg-accent-hover text-white rounded-xl transition shadow-glow-accent disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       Запустить сейчас
                     </button>

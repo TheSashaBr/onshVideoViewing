@@ -470,6 +470,7 @@ export default function Room() {
 
   // Cinema mode if in landscape on mobile, in fullscreen, or manually toggled
   const isCinemaMode = isFullscreen || isManualCinemaMode || (isLandscape && window.innerHeight < 600);
+  const hasVideo = !!roomState?.videoUrl;
 
   return (
     <div
@@ -622,10 +623,15 @@ export default function Room() {
 
         {/* Video Player Container */}
         <main
-          className={`relative bg-black overflow-hidden flex items-center justify-center ${
+          className={`relative bg-black ${
             isCinemaMode
-              ? 'w-full h-full'
-              : 'w-full aspect-video md:aspect-auto md:flex-1 shrink-0'
+              ? 'w-full h-full overflow-hidden flex items-center justify-center'
+              : hasVideo
+              ? 'w-full aspect-video md:aspect-auto md:flex-1 shrink-0 overflow-hidden flex items-center justify-center'
+              // No video yet: on phones, size to the "what to watch" form (capped,
+              // scrollable) instead of a 16:9 box it doesn't fit in — the chat
+              // below takes whatever is left.
+              : 'w-full shrink-0 max-h-[65dvh] overflow-y-auto md:max-h-none md:flex-1 md:overflow-hidden md:flex md:items-center md:justify-center'
           }`}
         >
           <Player />
@@ -633,7 +639,7 @@ export default function Room() {
           <CameraBubbles />
 
           {/* Mobile Floating Cinema Mode Button (FAB) */}
-          {!isCinemaMode && (
+          {!isCinemaMode && hasVideo && (
             <button
               onClick={toggleRotateAndFullscreen}
               className="md:hidden absolute bottom-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 bg-black/75 hover:bg-black/90 active:scale-95 backdrop-blur-md text-white border border-white/20 rounded-full text-xs font-semibold shadow-glass transition-all cursor-pointer"
