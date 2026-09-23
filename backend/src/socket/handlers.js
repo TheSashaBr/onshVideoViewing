@@ -2,9 +2,11 @@ const { v4: uuidv4 } = require('uuid');
 const {
   getRoom, updateRoomState, addMember, removeMember, getMembers,
   addChatMessage, getChatMessages, addVoiceUser, removeVoiceUser, getVoiceUsers,
-  addQueueItem, getQueue, removeQueueItem, popNextQueueItem
+  addQueueItem, getQueue, removeQueueItem, popNextQueueItem,
+  getFeed, saveFeed, clearFeed
 } = require('../redis/repository');
 const { verifyPassword } = require('../utils/password');
+const { FeedError, resolveTopic, fetchShortsPage } = require('../services/youtubeShorts');
 
 const MAX_QUEUE_SIZE = 50;
 
@@ -169,10 +171,155 @@ async function attemptHostTransfer(io, roomId, absentHostUserId) {
   }
 }
 
+// --- Shorts feed ---
+
+const FEED_PREFETCH_THRESHOLD = 5; // fetch the next page once this few items remain
+const FEED_MAX_ITEMS = 300;
+const FEED_START_COOLDOWN_MS = 3000; // uncached starts cost YouTube API quota
+
+// Feed operations for one room run strictly one after another (single server
+// process), so concurrent swipes / ended-events can't overwrite each other.
+const feedOps = new Map(); // roomId -> Promise
+function withFeedLock(roomId, fn) {
+  const run = (feedOps.get(roomId) || Promise.resolve()).then(fn);
+  const settled = run.catch(() => {});
+  feedOps.set(roomId, settled);
+  settled.then(() => {
+    if (feedOps.get(roomId) === settled) feedOps.delete(roomId);
+  });
+  return run;
+}
+
+function shuffled(items) {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function feedStatePayload(feed) {
+  if (!feed) return { active: false };
+  return {
+    active: true,
+    label: feed.topic.label,
+    index: feed.index,
+    total: feed.items.length,
+    hasMore: !!feed.nextPageToken,
+    current: feed.items[feed.index] || null,
+  };
+}
+
+function emitFeedState(io, roomId, feed) {
+  io.to(roomId).emit('message', {
+    type: 'FEED_STATE',
+    roomId,
+    senderId: 'SERVER',
+    timestamp: Date.now(),
+    payload: feedStatePayload(feed),
+  });
+}
+
+async function appendNextFeedPage(feed) {
+  if (!feed.nextPageToken || feed.items.length >= FEED_MAX_ITEMS) return false;
+  const page = await fetchShortsPage(feed.topic, feed.nextPageToken);
+  const seen = new Set(feed.items.map((it) => it.id));
+  const fresh = shuffled(page.items.filter((it) => !seen.has(it.id)));
+  feed.items = feed.items.concat(fresh).slice(0, FEED_MAX_ITEMS);
+  feed.nextPageToken = page.nextPageToken;
+  return fresh.length > 0;
+}
+
+// Loads the feed's current item as the room video for everyone (autoplaying).
+async function playFeedItem(io, roomId, feed, senderId) {
+  const item = feed.items[feed.index];
+  const videoUrl = `https://www.youtube.com/watch?v=${item.id}`;
+  const now = Date.now();
+  await updateRoomState(roomId, {
+    videoUrl,
+    videoType: 'youtube',
+    currentTime: 0,
+    isPlaying: 'true',
+    lastUpdatedAt: now,
+    lastUpdatedBy: senderId,
+  });
+  io.to(roomId).emit('message', {
+    type: 'LOAD_VIDEO',
+    roomId,
+    senderId: 'SERVER',
+    timestamp: now,
+    payload: { videoUrl, videoType: 'youtube', currentTime: 0, isPlaying: true },
+  });
+  emitFeedState(io, roomId, feed);
+}
+
+async function handleFeedMessage(io, socket, roomId, type, payload, senderId) {
+  try {
+    if (type === 'FEED_STOP') {
+      await endFeedIfActive(io, roomId);
+      return;
+    }
+
+    if (type === 'FEED_START') {
+      const topic = resolveTopic(payload);
+      if (!topic) throw new FeedError('invalid');
+      const page = await fetchShortsPage(topic);
+      if (page.items.length === 0) throw new FeedError('empty');
+      const feed = { topic, index: 0, items: shuffled(page.items), nextPageToken: page.nextPageToken };
+      await saveFeed(roomId, feed);
+      await playFeedItem(io, roomId, feed, senderId);
+      return;
+    }
+
+    const feed = await getFeed(roomId);
+    if (!feed) return;
+    // Only act if the sender was looking at the item we're on: every client
+    // reports "ended" at roughly the same moment, and a double swipe shouldn't
+    // skip two items.
+    if (Number(payload?.fromIndex) !== feed.index) return;
+
+    if (type === 'FEED_PREV') {
+      if (feed.index === 0) return;
+      feed.index -= 1;
+    } else {
+      if (feed.index + 1 >= feed.items.length && !(await appendNextFeedPage(feed))) {
+        throw new FeedError('end');
+      }
+      feed.index += 1;
+    }
+    await saveFeed(roomId, feed);
+    await playFeedItem(io, roomId, feed, senderId);
+
+    if (type === 'FEED_NEXT' && feed.nextPageToken && feed.items.length - feed.index <= FEED_PREFETCH_THRESHOLD) {
+      try {
+        if (await appendNextFeedPage(feed)) {
+          await saveFeed(roomId, feed);
+          emitFeedState(io, roomId, feed);
+        }
+      } catch (e) {
+        console.error('[FEED] Prefetch failed:', e.reason || e);
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof FeedError)) console.error('[FEED] Error:', err);
+    socket.emit('feed_error', { reason: err instanceof FeedError ? err.reason : 'upstream' });
+  }
+}
+
+// Called when something other than the feed takes over the room video.
+async function endFeedIfActive(io, roomId) {
+  if (await getFeed(roomId)) {
+    await clearFeed(roomId);
+    emitFeedState(io, roomId, null);
+  }
+}
+
 const MESSAGE_TYPES = new Set([
   'PLAY', 'PAUSE', 'SEEK', 'LOAD_VIDEO',
   'QUEUE_ADD', 'QUEUE_REMOVE', 'QUEUE_NEXT',
   'CHAT_MESSAGE', 'TYPING_STATUS', 'VIDEO_REACTION',
+  'FEED_START', 'FEED_NEXT', 'FEED_PREV', 'FEED_STOP',
 ]);
 const MIN_MESSAGE_INTERVAL = 100; // ms, per message type
 
@@ -181,6 +328,7 @@ function setupHandlers(io, socket) {
   // back-to-back (typing-stopped right before the chat message itself, SEEK
   // then PLAY), and a shared window silently dropped the second one.
   const lastMessageTimeByType = new Map();
+  let lastFeedStartAt = 0;
   socket.on('join_room', async ({ roomId, userId, nickname, password }) => {
     const room = await getRoom(roomId);
     if (!room) {
@@ -310,6 +458,19 @@ function setupHandlers(io, socket) {
     }
 
     try {
+      const feed = await getFeed(roomId);
+      socket.emit('message', {
+        type: 'FEED_STATE',
+        roomId,
+        senderId: 'SERVER',
+        timestamp: Date.now(),
+        payload: feedStatePayload(feed)
+      });
+    } catch (e) {
+      console.error('Error fetching feed:', e);
+    }
+
+    try {
       await broadcastVoiceUsers(io, roomId);
     } catch (e) {
       console.error('Error broadcasting voice users on join:', e);
@@ -319,6 +480,8 @@ function setupHandlers(io, socket) {
   socket.on('message', async (msg) => {
     if (!msg || typeof msg !== 'object' || !MESSAGE_TYPES.has(msg.type) || !msg.roomId) return;
     if (msg.senderId !== socket.userId) return; // Prevent spoofing
+    // Only the room this socket joined (and passed the password check for).
+    if (msg.roomId !== socket.roomId) return;
     const now_ts = Date.now();
     if (now_ts - (lastMessageTimeByType.get(msg.type) || 0) < MIN_MESSAGE_INTERVAL) return;
     lastMessageTimeByType.set(msg.type, now_ts);
@@ -453,6 +616,7 @@ function setupHandlers(io, socket) {
             lastUpdatedBy: senderId
           });
           io.to(roomId).emit('message', msg);
+          await withFeedLock(roomId, () => endFeedIfActive(io, roomId));
           break;
         }
 
@@ -565,6 +729,7 @@ function setupHandlers(io, socket) {
             timestamp: Date.now(),
             payload: { queue: updatedQueue }
           });
+          await withFeedLock(roomId, () => endFeedIfActive(io, roomId));
           break;
         }
 
@@ -605,6 +770,27 @@ function setupHandlers(io, socket) {
           const emoji = (payload?.emoji || '').trim().slice(0, 8);
           if (!emoji) return;
           broadcast();
+          break;
+        }
+
+        case 'FEED_START':
+        case 'FEED_NEXT':
+        case 'FEED_PREV':
+        case 'FEED_STOP': {
+          const room = await getRoom(roomId);
+          if (!room) return;
+          if (room.controlMode === 'host' && !socket.isHost) {
+            socket.emit('control_denied', { action: type });
+            return;
+          }
+          if (type === 'FEED_START') {
+            if (now - lastFeedStartAt < FEED_START_COOLDOWN_MS) {
+              socket.emit('feed_error', { reason: 'cooldown' });
+              return;
+            }
+            lastFeedStartAt = now;
+          }
+          await withFeedLock(roomId, () => handleFeedMessage(io, socket, roomId, type, payload, senderId));
           break;
         }
       }

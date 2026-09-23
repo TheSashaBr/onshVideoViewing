@@ -547,4 +547,237 @@ describe('socket handlers', () => {
     });
     await conflict; // guest's own attempt to start a second stream is rejected
   });
+
+  it('ignores messages addressed to a room the socket has not joined', async () => {
+    const otherRoomId = uuidv4();
+    const otherHostId = uuidv4();
+    await createRoom(otherRoomId, otherHostId);
+
+    const intruder = connectClient();
+    const victim = connectClient();
+    await Promise.all([waitForEvent(intruder, 'connect'), waitForEvent(victim, 'connect')]);
+
+    const intruderId = uuidv4();
+    intruder.emit('join_room', { roomId, userId: intruderId, nickname: 'Intruder' });
+    await waitForMessageOfType(intruder, 'SYNC_STATE');
+    victim.emit('join_room', { roomId: otherRoomId, userId: otherHostId, nickname: 'Victim' });
+    await waitForMessageOfType(victim, 'SYNC_STATE');
+
+    const leaked = waitForMessageOfType(victim, 'LOAD_VIDEO', 400).catch(() => null);
+    intruder.emit('message', {
+      type: 'LOAD_VIDEO',
+      roomId: otherRoomId,
+      senderId: intruderId,
+      timestamp: Date.now(),
+      payload: { videoUrl: 'https://youtu.be/aaaaaaaaaaa', videoType: 'youtube' },
+    });
+    assert.equal(await leaked, null);
+  });
+
+  describe('shorts feed', () => {
+    const originalFetch = global.fetch;
+    const originalKey = process.env.YOUTUBE_API_KEY;
+    let fetchCalls;
+
+    const vid = (n) => `vid${String(n).padStart(8, '0')}`;
+    const ytPage = (ids, nextPageToken) => ({
+      items: ids.map((id) => ({ id: { videoId: id }, snippet: { title: `Шортс &quot;${id}&quot;`, channelTitle: 'Канал' } })),
+      nextPageToken,
+    });
+    // pages: { first: <response>, <pageToken>: <response> }
+    const mockYouTube = (pages) => {
+      global.fetch = async (url) => {
+        const u = new URL(url);
+        fetchCalls.push(u);
+        const page = pages[u.searchParams.get('pageToken') || 'first'];
+        return { ok: true, json: async () => page };
+      };
+    };
+
+    const feedMsg = (type, senderId, payload = {}) => ({ type, roomId, senderId, timestamp: Date.now(), payload });
+
+    async function joinHostAndGuest() {
+      const host = connectClient();
+      const guest = connectClient();
+      await Promise.all([waitForEvent(host, 'connect'), waitForEvent(guest, 'connect')]);
+      host.emit('join_room', { roomId, userId: hostId, nickname: 'Host' });
+      await waitForMessageOfType(host, 'SYNC_STATE');
+      const guestId = uuidv4();
+      guest.emit('join_room', { roomId, userId: guestId, nickname: 'Guest' });
+      await waitForMessageOfType(guest, 'SYNC_STATE');
+      return { host, guest, guestId };
+    }
+
+    // Resolves with the next FEED_STATE whose payload satisfies `predicate`.
+    function waitForFeedState(socket, predicate, timeoutMs = 2000) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Timed out waiting for FEED_STATE')), timeoutMs);
+        const handler = (msg) => {
+          if (msg?.type === 'FEED_STATE' && predicate(msg.payload)) {
+            clearTimeout(timer);
+            socket.off('message', handler);
+            resolve(msg.payload);
+          }
+        };
+        socket.on('message', handler);
+      });
+    }
+
+    beforeEach(() => {
+      fetchCalls = [];
+      process.env.YOUTUBE_API_KEY = 'test-key';
+      for (const key of [...hashes.keys()]) {
+        if (key.startsWith('ytshorts:')) hashes.delete(key);
+      }
+    });
+
+    after(() => {
+      global.fetch = originalFetch;
+      if (originalKey === undefined) delete process.env.YOUTUBE_API_KEY;
+      else process.env.YOUTUBE_API_KEY = originalKey;
+    });
+
+    it('starts a feed for everyone with the first short autoplaying', async () => {
+      mockYouTube({ first: ytPage([vid(1), vid(2), vid(3)], null) });
+      const { host, guest } = await joinHostAndGuest();
+
+      const guestLoad = waitForMessageOfType(guest, 'LOAD_VIDEO');
+      const guestFeed = waitForFeedState(guest, (p) => p.active);
+      host.emit('message', feedMsg('FEED_START', hostId, { topic: 'memes' }));
+
+      const load = await guestLoad;
+      const state = await guestFeed;
+      assert.equal(load.payload.isPlaying, true);
+      assert.equal(load.payload.videoType, 'youtube');
+      assert.equal(load.payload.videoUrl, `https://www.youtube.com/watch?v=${state.current.id}`);
+      assert.equal(state.label, 'Мемы');
+      assert.equal(state.index, 0);
+      assert.equal(state.total, 3);
+      assert.equal(state.current.title, `Шортс "${state.current.id}"`); // HTML entities decoded
+
+      const params = fetchCalls[0].searchParams;
+      assert.equal(params.get('q'), 'мемы #shorts');
+      assert.equal(params.get('videoDuration'), 'short');
+      assert.equal(params.get('videoEmbeddable'), 'true');
+      assert.equal(params.get('key'), 'test-key');
+    });
+
+    it('advances only once when several clients report the same item ended', async () => {
+      mockYouTube({ first: ytPage([vid(1), vid(2), vid(3)], null) });
+      const { host, guest, guestId } = await joinHostAndGuest();
+
+      const started = waitForFeedState(host, (p) => p.active);
+      host.emit('message', feedMsg('FEED_START', hostId, { topic: 'memes' }));
+      await started;
+
+      const states = [];
+      host.on('message', (m) => { if (m.type === 'FEED_STATE') states.push(m.payload.index); });
+      host.emit('message', feedMsg('FEED_NEXT', hostId, { fromIndex: 0 }));
+      guest.emit('message', feedMsg('FEED_NEXT', guestId, { fromIndex: 0 }));
+      await new Promise((r) => setTimeout(r, 400));
+      assert.deepEqual(states, [1]);
+    });
+
+    it('goes back with FEED_PREV and ignores a stale fromIndex', async () => {
+      mockYouTube({ first: ytPage([vid(1), vid(2), vid(3)], null) });
+      const { host } = await joinHostAndGuest();
+
+      const started = waitForFeedState(host, (p) => p.active);
+      host.emit('message', feedMsg('FEED_START', hostId, { topic: 'memes' }));
+      await started;
+
+      const atOne = waitForFeedState(host, (p) => p.index === 1);
+      host.emit('message', feedMsg('FEED_NEXT', hostId, { fromIndex: 0 }));
+      await atOne;
+      await new Promise((r) => setTimeout(r, 120)); // past the per-type throttle
+      const atTwo = waitForFeedState(host, (p) => p.index === 2);
+      host.emit('message', feedMsg('FEED_NEXT', hostId, { fromIndex: 1 }));
+      await atTwo;
+
+      const states = [];
+      host.on('message', (m) => { if (m.type === 'FEED_STATE') states.push(m.payload.index); });
+      host.emit('message', feedMsg('FEED_PREV', hostId, { fromIndex: 1 })); // stale
+      await new Promise((r) => setTimeout(r, 150));
+      host.emit('message', feedMsg('FEED_PREV', hostId, { fromIndex: 2 }));
+      await new Promise((r) => setTimeout(r, 200));
+      assert.deepEqual(states, [1]);
+    });
+
+    it('fetches the next page as the feed nears the end of the loaded items', async () => {
+      mockYouTube({
+        first: ytPage([vid(1), vid(2)], 'P2'),
+        P2: ytPage([vid(3), vid(4)], null),
+      });
+      const { host } = await joinHostAndGuest();
+
+      const started = waitForFeedState(host, (p) => p.active);
+      host.emit('message', feedMsg('FEED_START', hostId, { topic: 'memes' }));
+      assert.equal((await started).total, 2);
+
+      const grown = waitForFeedState(host, (p) => p.total === 4);
+      host.emit('message', feedMsg('FEED_NEXT', hostId, { fromIndex: 0 }));
+      const state = await grown;
+      assert.equal(state.index, 1);
+      assert.equal(state.hasMore, false);
+      assert.equal(fetchCalls[1].searchParams.get('pageToken'), 'P2');
+    });
+
+    it('reports a missing API key to the sender without touching the room', async () => {
+      delete process.env.YOUTUBE_API_KEY;
+      mockYouTube({ first: ytPage([vid(1)], null) });
+      const { host, guest } = await joinHostAndGuest();
+
+      const guestSawFeed = waitForFeedState(guest, (p) => p.active, 400).catch(() => null);
+      const error = waitForEvent(host, 'feed_error');
+      host.emit('message', feedMsg('FEED_START', hostId, { topic: 'memes' }));
+
+      assert.deepEqual(await error, { reason: 'config' });
+      assert.equal(await guestSawFeed, null);
+      assert.equal(fetchCalls.length, 0);
+    });
+
+    it('serves a repeated topic from cache instead of calling YouTube again', async () => {
+      mockYouTube({ first: ytPage([vid(1), vid(2)], null) });
+      const { host, guest, guestId } = await joinHostAndGuest();
+
+      const first = waitForFeedState(host, (p) => p.active);
+      host.emit('message', feedMsg('FEED_START', hostId, { topic: 'memes' }));
+      await first;
+
+      const second = waitForMessageOfType(guest, 'LOAD_VIDEO');
+      guest.emit('message', feedMsg('FEED_START', guestId, { topic: 'memes' }));
+      await second;
+      assert.equal(fetchCalls.length, 1);
+    });
+
+    it('ends the feed when someone loads a regular video', async () => {
+      mockYouTube({ first: ytPage([vid(1), vid(2)], null) });
+      const { host, guest, guestId } = await joinHostAndGuest();
+
+      const started = waitForFeedState(host, (p) => p.active);
+      host.emit('message', feedMsg('FEED_START', hostId, { topic: 'memes' }));
+      await started;
+
+      const ended = waitForFeedState(host, (p) => p.active === false);
+      guest.emit('message', feedMsg('LOAD_VIDEO', guestId, { videoUrl: 'https://youtu.be/bbbbbbbbbbb', videoType: 'youtube' }));
+      await ended;
+    });
+
+    it('blocks a guest from swiping the feed in host-only mode', async () => {
+      mockYouTube({ first: ytPage([vid(1), vid(2)], null) });
+      const { host, guest, guestId } = await joinHostAndGuest();
+
+      const started = waitForFeedState(guest, (p) => p.active);
+      host.emit('message', feedMsg('FEED_START', hostId, { topic: 'memes' }));
+      await started;
+
+      const modeChanged = waitForMessageOfType(guest, 'CONTROL_MODE_CHANGED');
+      host.emit('set_control_mode', { mode: 'host' });
+      await modeChanged;
+
+      const denied = waitForEvent(guest, 'control_denied');
+      guest.emit('message', feedMsg('FEED_NEXT', guestId, { fromIndex: 0 }));
+      assert.equal((await denied).action, 'FEED_NEXT');
+    });
+  });
 });

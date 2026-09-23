@@ -90,6 +90,9 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
   // Expose an imperative local-only seek for the drift-correction "Sync" button.
   // This must never broadcast to the room — only bump the ignore window so the
   // resulting native player event isn't mistaken for a user-initiated seek.
+  // Local-only play/pause for callers that broadcast the change themselves
+  // (the Shorts feed's tap-to-pause overlay): the native player event that
+  // follows is suppressed so it isn't sent to the room a second time.
   useImperativeHandle(ref, () => ({
     seekLocal: (time) => {
       if (typeof time !== 'number' || isNaN(time)) return;
@@ -98,7 +101,40 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
         lastKnownPlayerTime.current = time;
         playerRef.current?.seekTo(time, true);
       } catch (e) {}
-    }
+    },
+    playLocal: async (atTime) => {
+      const player = playerRef.current;
+      if (!player) return;
+      try {
+        ignoreEventsUntil.current = Date.now() + 1500;
+        if (typeof atTime === 'number' && !isNaN(atTime)) {
+          const cur = await player.getCurrentTime();
+          if (Math.abs(cur - atTime) > 1.5) player.seekTo(atTime, true);
+          lastKnownPlayerTime.current = atTime;
+        }
+        player.playVideo();
+      } catch (e) {}
+    },
+    pauseLocal: () => {
+      try {
+        ignoreEventsUntil.current = Date.now() + 1500;
+        playerRef.current?.pauseVideo();
+      } catch (e) {}
+    },
+    isPlayingLocal: async () => {
+      try {
+        return (await playerRef.current?.getPlayerState()) === 1;
+      } catch (e) {
+        return false;
+      }
+    },
+    getTimeLocal: async () => {
+      try {
+        return (await playerRef.current?.getCurrentTime()) || 0;
+      } catch (e) {
+        return 0;
+      }
+    },
   }), []);
 
   const [useFallback, setUseFallback] = useState(false);

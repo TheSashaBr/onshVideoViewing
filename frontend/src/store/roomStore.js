@@ -14,6 +14,7 @@ export const useRoomStore = create((set, get) => ({
   members: [],
   chatMessages: [],
   queue: [], // [{ id, url, videoType, addedBy, nickname, addedAt }]
+  feed: { active: false }, // server-driven Shorts feed: { active, label, index, total, hasMore, current: { id, title, channel } }
   typingUsers: {}, // { [userId]: { nickname: string, timeoutId: number } }
   lastRemoteAction: null,
   lastReaction: null, // { emoji, senderId, id, timestamp } — ephemeral, drives the floating reaction animation
@@ -124,7 +125,25 @@ export const useRoomStore = create((set, get) => ({
     });
 
     socket.on('control_denied', ({ action } = {}) => {
-      showToast('Управлять воспроизведением может только хост', 'warning', 3500);
+      showToast(
+        String(action || '').startsWith('FEED_')
+          ? 'Листать ленту может только хост'
+          : 'Управлять воспроизведением может только хост',
+        'warning',
+        3500
+      );
+    });
+
+    socket.on('feed_error', ({ reason } = {}) => {
+      const messages = {
+        config: 'Лента недоступна: на сервере не настроен ключ YouTube API',
+        quota: 'Лимит запросов к YouTube на сегодня исчерпан — попробуйте завтра',
+        empty: 'По этой теме ничего не нашлось — попробуйте другую',
+        end: 'Лента закончилась — выберите другую тему',
+        cooldown: 'Слишком часто — подождите пару секунд',
+        invalid: 'Введите тему для ленты',
+      };
+      showToast(messages[reason] || 'Не удалось загрузить ленту, попробуйте ещё раз', 'warning', 4000);
     });
     
     socket.on('message', (msg) => {
@@ -288,6 +307,9 @@ export const useRoomStore = create((set, get) => ({
         case 'QUEUE_STATE':
           set({ queue: Array.isArray(payload?.queue) ? payload.queue : [] });
           break;
+        case 'FEED_STATE':
+          set({ feed: payload?.active ? payload : { active: false } });
+          break;
         case 'VIDEO_REACTION':
           if (payload?.emoji) {
             set({ lastReaction: { emoji: payload.emoji, senderId, id: Math.random(), timestamp: Date.now() } });
@@ -432,6 +454,27 @@ export const useRoomStore = create((set, get) => ({
     get().sendMessage('QUEUE_NEXT', {});
   },
 
+  // topic: one of the server's preset ids, or query: free text
+  startFeed: ({ topic, query } = {}) => {
+    get().sendMessage('FEED_START', topic ? { topic } : { query });
+  },
+
+  // fromIndex lets the server ignore stale/duplicate requests (e.g. every
+  // client reporting "ended" for the same short at once).
+  feedNext: () => {
+    const { feed } = get();
+    if (feed.active) get().sendMessage('FEED_NEXT', { fromIndex: feed.index });
+  },
+
+  feedPrev: () => {
+    const { feed } = get();
+    if (feed.active && feed.index > 0) get().sendMessage('FEED_PREV', { fromIndex: feed.index });
+  },
+
+  stopFeed: () => {
+    get().sendMessage('FEED_STOP', {});
+  },
+
   setControlMode: (mode) => {
     const { socket, isHost } = get();
     if (socket && isHost) {
@@ -477,6 +520,7 @@ export const useRoomStore = create((set, get) => ({
       members: [],
       chatMessages: [],
       queue: [],
+      feed: { active: false },
       typingUsers: {},
       lastRemoteAction: null,
       lastReaction: null,

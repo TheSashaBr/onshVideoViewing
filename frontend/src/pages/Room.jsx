@@ -66,6 +66,7 @@ export default function Room() {
   const isJoining = useRoomStore(state => state.isJoining);
   const hasJoinedRoom = useRoomStore(state => state.hasJoinedRoom);
   const roomState = useRoomStore(state => state.roomState);
+  const feedActive = useRoomStore(state => state.feed.active);
   const joinError = useRoomStore(state => state.joinError);
   const roomVoiceUsers = useVoiceStore(state => state.roomVoiceUsers);
 
@@ -626,6 +627,9 @@ export default function Room() {
           className={`relative bg-black ${
             isCinemaMode
               ? 'w-full h-full overflow-hidden flex items-center justify-center'
+              // Shorts are 9:16 — a 16:9 box on a phone would leave them ~120px wide.
+              : feedActive
+              ? 'w-full h-[62dvh] md:h-auto md:flex-1 shrink-0 overflow-hidden flex items-center justify-center'
               : hasVideo
               ? 'w-full aspect-video md:aspect-auto md:flex-1 shrink-0 overflow-hidden flex items-center justify-center'
               // No video yet: on phones, size to the "what to watch" form (capped,

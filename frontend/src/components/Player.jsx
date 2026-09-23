@@ -10,9 +10,12 @@ import DzenPlayer from './players/DzenPlayer';
 import LocalStreamPlayer from './players/LocalStreamPlayer';
 import { PlayerSkeleton } from './Skeleton';
 import { showToast } from './ToastContainer';
+import FeedOverlay from './FeedOverlay';
+import FeedTopicPicker from './FeedTopicPicker';
 import { cn } from '../utils/cn';
 import {
   ClipboardPaste,
+  Sparkles,
   Film,
   Play,
   Link2,
@@ -156,6 +159,10 @@ export default function Player() {
   const lastReaction = useRoomStore(state => state.lastReaction);
   const sendReaction = useRoomStore(state => state.sendReaction);
   const members = useRoomStore(state => state.members);
+  const feed = useRoomStore(state => state.feed);
+  const feedNext = useRoomStore(state => state.feedNext);
+  const feedPrev = useRoomStore(state => state.feedPrev);
+  const stopFeed = useRoomStore(state => state.stopFeed);
 
   const isScreenSharing = useVoiceStore(state => state.isScreenSharing);
   const isStreamConnecting = useVoiceStore(state => state.isStreamConnecting);
@@ -175,6 +182,7 @@ export default function Player() {
   const [inputUrl, setInputUrl] = useState('');
   const [error, setError] = useState(null);
   const [showUrlChanger, setShowUrlChanger] = useState(false);
+  const [showFeedPicker, setShowFeedPicker] = useState(false);
   const [localTime, setLocalTime] = useState(null);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [floatingReactions, setFloatingReactions] = useState([]);
@@ -312,14 +320,47 @@ export default function Player() {
     setError(errMsg);
   };
 
-  // Auto-advance to the next queued video when the current one ends. Only
-  // wired for YouTube for now — the other platforms' embeds don't expose a
-  // reliable "ended" signal over postMessage, so elsewhere it's manual-only
-  // via the "Далее" button.
+  // Auto-advance to the next feed item / queued video when the current one
+  // ends. Only wired for YouTube for now — the other platforms' embeds don't
+  // expose a reliable "ended" signal over postMessage, so elsewhere it's
+  // manual-only via the "Далее" button.
   const handleEnded = () => {
-    if (canControl && queue.length > 0) {
+    if (!canControl) return;
+    if (feed.active) {
+      feedNext();
+    } else if (queue.length > 0) {
       playNextFromQueue();
     }
+  };
+
+  // Feed tap-to-pause. Driven by what this viewer's player is actually doing:
+  // if mobile autoplay was blocked, the tap just starts playback locally at
+  // the room's position rather than pausing everyone.
+  const handleFeedTogglePlay = async () => {
+    const player = activePlayerRef.current;
+    if (!player?.isPlayingLocal) return;
+    if (await player.isPlayingLocal()) {
+      player.pauseLocal();
+      handlePause(await player.getTimeLocal());
+      return;
+    }
+    if (roomState.isPlaying) {
+      const elapsed = (Date.now() - (roomState.lastUpdatedAt || Date.now())) / 1000;
+      const expected = (parseFloat(roomState.currentTime) || 0) + Math.max(0, elapsed * (roomState.playbackRate || 1));
+      player.playLocal(expected);
+    } else {
+      player.playLocal();
+      handlePlay(await player.getTimeLocal());
+    }
+  };
+
+  const openFeedPicker = () => {
+    if (!canControl) {
+      showToast('Включить ленту может только хост', 'warning', 3000);
+      return;
+    }
+    setShowUrlChanger(false);
+    setShowFeedPicker(true);
   };
 
   const isLocalStream = roomState.videoType === 'local-stream';
@@ -508,6 +549,15 @@ export default function Player() {
                 <span>{isStreamConnecting ? 'Подключение...' : 'Транслировать экран с устройства'}</span>
               </button>
 
+              <button
+                type="button"
+                onClick={openFeedPicker}
+                className="w-full mt-2 flex items-center justify-center gap-2 bg-white/[0.05] hover:bg-white/[0.09] active:scale-[0.98] border border-border-subtle hover:border-accent/40 text-white font-semibold py-3 px-4 rounded-xl transition text-sm cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4 text-accent" />
+                <span>Лента Shorts</span>
+              </button>
+
               <div className="hidden sm:flex mt-5 items-center justify-center gap-1.5 text-[11px] text-gray-500">
                 <Lightbulb className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
                 <span>Совет: скопируйте ссылку из адресной строки браузера или приложения</span>
@@ -520,6 +570,8 @@ export default function Player() {
             </div>
           )}
         </div>
+
+        <FeedTopicPicker open={showFeedPicker} onClose={() => setShowFeedPicker(false)} />
       </div>
     );
   }
@@ -618,6 +670,18 @@ export default function Player() {
         />
       )}
 
+      {feed.active && (
+        <FeedOverlay
+          feed={feed}
+          canControl={canControl}
+          onNext={feedNext}
+          onPrev={feedPrev}
+          onStop={stopFeed}
+          onTogglePlay={handleFeedTogglePlay}
+          onChangeTopic={openFeedPicker}
+        />
+      )}
+
       {/* Floating video reactions */}
       <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden">
         {floatingReactions.map((r) => (
@@ -675,8 +739,8 @@ export default function Player() {
         </div>
       )}
 
-      {/* Video controls & sync badge bar */}
-      <div className="absolute bottom-3 sm:bottom-4 left-3 sm:left-4 z-20 flex items-center gap-2 select-none pointer-events-auto">
+      {/* Video controls & sync badge bar (the feed overlay has its own) */}
+      <div className={cn('absolute bottom-3 sm:bottom-4 left-3 sm:left-4 z-20 flex items-center gap-2 select-none pointer-events-auto', feed.active && 'hidden')}>
         <button
           onClick={() => {
             if (!canControl) {
@@ -860,6 +924,15 @@ export default function Player() {
                   <MonitorUp className="w-3.5 h-3.5 text-accent" />
                   <span>{isStreamConnecting ? 'Подключение...' : 'Транслировать экран вместо этого'}</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={openFeedPicker}
+                  className="w-full mt-2 flex items-center justify-center gap-2 bg-white/[0.04] hover:bg-white/[0.08] active:scale-[0.98] border border-border-subtle hover:border-accent/40 text-gray-200 font-medium py-2.5 px-4 rounded-xl transition text-xs cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-accent" />
+                  <span>Лента Shorts</span>
+                </button>
               </>
             ) : (
               <div className="flex items-center gap-2 py-3 px-4 rounded-xl bg-amber-400/10 border border-amber-400/25 text-amber-300 text-xs font-medium mb-1">
@@ -911,6 +984,8 @@ export default function Player() {
           </div>
         </div>
       )}
+
+      <FeedTopicPicker open={showFeedPicker} onClose={() => setShowFeedPicker(false)} />
     </div>
   );
 }

@@ -34,7 +34,8 @@ async function getRoom(roomId) {
   await redisClient.expire(`${roomKey}:members`, ROOM_TTL);
   await redisClient.expire(`${roomKey}:chat`, ROOM_TTL);
   await redisClient.expire(`${roomKey}:queue`, ROOM_TTL);
-  
+  await redisClient.expire(`${roomKey}:feed`, ROOM_TTL);
+
   return room;
 }
 
@@ -125,10 +126,38 @@ async function getVoiceUsers(roomId) {
   return users || [];
 }
 
+// Shorts feed: { topic, index, items: [{ id, title, channel }], nextPageToken }
+async function getFeed(roomId) {
+  const data = await redisClient.hGetAll(`room:${roomId}:feed`);
+  if (!data || !data.items) return null;
+  return {
+    topic: JSON.parse(data.topic),
+    index: parseInt(data.index, 10) || 0,
+    items: JSON.parse(data.items),
+    nextPageToken: data.nextPageToken || null,
+  };
+}
+
+async function saveFeed(roomId, feed) {
+  const key = `room:${roomId}:feed`;
+  await redisClient.hSet(key, {
+    topic: JSON.stringify(feed.topic),
+    index: feed.index,
+    items: JSON.stringify(feed.items),
+    nextPageToken: feed.nextPageToken || '',
+  });
+  await redisClient.expire(key, ROOM_TTL);
+}
+
+async function clearFeed(roomId) {
+  await redisClient.del(`room:${roomId}:feed`);
+}
+
 module.exports = {
   createRoom, getRoom, updateRoomState,
   addMember, removeMember, getMembers,
   addChatMessage, getChatMessages,
   addVoiceUser, removeVoiceUser, getVoiceUsers,
-  addQueueItem, getQueue, removeQueueItem, popNextQueueItem
+  addQueueItem, getQueue, removeQueueItem, popNextQueueItem,
+  getFeed, saveFeed, clearFeed
 };

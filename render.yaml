@@ -21,3 +21,5 @@ services:
         sync: false
       - key: LIVEKIT_API_SECRET
         sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false

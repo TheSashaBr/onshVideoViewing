@@ -327,4 +327,61 @@ describe('roomStore', () => {
     const messages = useRoomStore.getState().chatMessages;
     expect(messages[messages.length - 1].replyTo).toEqual({ id: 'msg-1', nickname: 'Alice', text: 'Го смотреть?' });
   });
+
+  describe('shorts feed', () => {
+    const feedState = (payload) => ({ type: 'FEED_STATE', roomId: 'room1', senderId: 'SERVER', timestamp: Date.now(), payload });
+
+    it('applies FEED_STATE and resets it when the feed ends', () => {
+      const socket = joinAndGetSocket(false);
+      socket.trigger('message', feedState({
+        active: true, label: 'Мемы', index: 2, total: 50, hasMore: true,
+        current: { id: 'abcdefghijk', title: 'Кот', channel: 'Канал' },
+      }));
+      expect(useRoomStore.getState().feed).toMatchObject({ active: true, label: 'Мемы', index: 2 });
+
+      socket.trigger('message', feedState({ active: false }));
+      expect(useRoomStore.getState().feed).toEqual({ active: false });
+    });
+
+    it('sends FEED_NEXT/FEED_PREV with the index the user was looking at', () => {
+      const socket = joinAndGetSocket(false);
+      socket.trigger('message', feedState({ active: true, label: 'Мемы', index: 3, total: 50, current: null }));
+      socket.emitted.length = 0;
+
+      useRoomStore.getState().feedNext();
+      useRoomStore.getState().feedPrev();
+
+      expect(socket.emitted.map(e => [e.payload.type, e.payload.payload])).toEqual([
+        ['FEED_NEXT', { fromIndex: 3 }],
+        ['FEED_PREV', { fromIndex: 3 }],
+      ]);
+    });
+
+    it('does not send FEED_PREV from the first item or feed actions when no feed is active', () => {
+      const socket = joinAndGetSocket(false);
+      socket.emitted.length = 0;
+      useRoomStore.getState().feedNext(); // no feed yet
+
+      socket.trigger('message', feedState({ active: true, label: 'Мемы', index: 0, total: 50, current: null }));
+      useRoomStore.getState().feedPrev();
+
+      expect(socket.emitted).toEqual([]);
+    });
+
+    it('starts a feed by preset topic or by free-text query', () => {
+      const socket = joinAndGetSocket(true);
+      socket.emitted.length = 0;
+
+      useRoomStore.getState().startFeed({ topic: 'memes' });
+      useRoomStore.getState().startFeed({ query: 'котики' });
+
+      expect(socket.emitted.map(e => e.payload.payload)).toEqual([{ topic: 'memes' }, { query: 'котики' }]);
+    });
+
+    it('explains a feed_error to the user', () => {
+      const socket = joinAndGetSocket(true);
+      socket.trigger('feed_error', { reason: 'config' });
+      expect(showToast).toHaveBeenCalledWith(expect.stringContaining('ключ YouTube API'), 'warning', 4000);
+    });
+  });
 });
