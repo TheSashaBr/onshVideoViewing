@@ -870,11 +870,14 @@ export default function Room() {
           {/* Sheet Container */}
           <div
             className="relative z-10 w-full max-h-[82vh] bg-surface-raised border-t border-border-medium rounded-t-3xl shadow-glass-lg flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300 pb-safe"
-            onTouchStart={handleSheetTouchStart}
-            onTouchEnd={handleSheetTouchEnd}
           >
-            {/* Drag Handle & Header */}
-            <div className="pt-3 pb-2.5 px-4 border-b border-border-subtle bg-surface/80 flex flex-col shrink-0 select-none">
+            {/* Drag Handle & Header — swipe-to-close lives here only, so a
+                downward drag to scroll the list back up doesn't close the sheet */}
+            <div
+              className="pt-3 pb-2.5 px-4 border-b border-border-subtle bg-surface/80 flex flex-col shrink-0 select-none"
+              onTouchStart={handleSheetTouchStart}
+              onTouchEnd={handleSheetTouchEnd}
+            >
               <div className="w-10 h-1 bg-white/25 rounded-full mx-auto mb-2.5 cursor-grab active:cursor-grabbing" />
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">

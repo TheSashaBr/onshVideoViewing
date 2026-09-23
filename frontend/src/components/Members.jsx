@@ -70,8 +70,10 @@ export default function Members() {
     setConfirmTransferId(null);
   };
 
+  // The whole panel scrolls (not just the list): the voice chat and control
+  // mode blocks above the list can outgrow a short phone panel by themselves.
   return (
-    <div className="flex flex-col h-full bg-surface">
+    <div className="flex flex-col h-full overflow-y-auto overscroll-contain bg-surface">
       {/* Voice Chat Section */}
       <div className="p-3.5 border-b border-border-subtle shrink-0">
         <VoiceChat variant="panel" />
@@ -148,7 +150,7 @@ export default function Members() {
       <ul
         role="list"
         aria-label="Список участников комнаты"
-        className="flex-1 overflow-y-auto p-3 space-y-2 select-text"
+        className="flex-1 p-3 space-y-2 select-text"
       >
         {displayMembers.length === 0 && isJoining ? (
           <>
