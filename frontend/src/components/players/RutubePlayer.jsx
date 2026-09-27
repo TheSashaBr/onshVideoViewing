@@ -1,5 +1,6 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useRoomStore } from '../../store/roomStore';
+import { usePlaybackReportGuard } from '../../utils/playbackGuard';
 
 const RutubePlayer = forwardRef(function RutubePlayer({
   videoId,
@@ -16,6 +17,8 @@ const RutubePlayer = forwardRef(function RutubePlayer({
   const currentRutubeTimeRef = useRef(0);
   const currentRutubeStateRef = useRef('paused');
   const lastKnownRutubeTime = useRef(0);
+  // Play/pause reporting; ignoreEventsUntil above only gates seek detection.
+  const guard = usePlaybackReportGuard({ startupBlocksPlay: true });
 
   const lastRemoteAction = useRoomStore(state => state.lastRemoteAction);
 
@@ -34,6 +37,7 @@ const RutubePlayer = forwardRef(function RutubePlayer({
   useEffect(() => {
     if (!lastRemoteAction || !isReadyRef.current) return;
     const { type, payload, timestamp } = lastRemoteAction;
+    guard.markRemoteCommand();
 
     try {
       if (type === 'PLAY') {
@@ -110,6 +114,7 @@ const RutubePlayer = forwardRef(function RutubePlayer({
       switch (payload.type) {
         case 'player:ready':
           isReadyRef.current = true;
+          guard.markStartup();
           lastKnownRutubeTime.current = 0;
           if (roomState.isPlaying) {
             let expectedTime = parseFloat(roomState.currentTime || 0);
@@ -131,14 +136,12 @@ const RutubePlayer = forwardRef(function RutubePlayer({
           const state = payload.data?.state; // 'playing', 'paused', 'stopped'
           currentRutubeStateRef.current = state;
 
-          if (Date.now() < ignoreEventsUntil.current) {
-            return;
-          }
-
           if (state === 'playing') {
+            if (!guard.shouldReport(true)) return;
             lastKnownRutubeTime.current = currentRutubeTimeRef.current;
             onPlay?.(currentRutubeTimeRef.current);
           } else if (state === 'paused' || state === 'stopped') {
+            if (!guard.shouldReport(false)) return;
             lastKnownRutubeTime.current = currentRutubeTimeRef.current;
             onPause?.(currentRutubeTimeRef.current);
           }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useRoomStore } from '../../store/roomStore';
+import { usePlaybackReportGuard } from '../../utils/playbackGuard';
 
 const VKVideoPlayer = forwardRef(function VKVideoPlayer({
   videoId,
@@ -16,6 +17,8 @@ const VKVideoPlayer = forwardRef(function VKVideoPlayer({
   const hasSyncedOnce = useRef(false);
   const currentTimeRef = useRef(0);
   const lastKnownTime = useRef(0);
+  // Play/pause reporting; ignoreEventsUntil above only gates seek detection.
+  const guard = usePlaybackReportGuard({ startupBlocksPlay: true });
 
   const lastRemoteAction = useRoomStore(state => state.lastRemoteAction);
 
@@ -30,6 +33,7 @@ const VKVideoPlayer = forwardRef(function VKVideoPlayer({
   useEffect(() => {
     if (!lastRemoteAction || !isReadyRef.current) return;
     const { type, payload, timestamp } = lastRemoteAction;
+    guard.markRemoteCommand();
 
     try {
       if (type === 'PLAY') {
@@ -95,6 +99,9 @@ const VKVideoPlayer = forwardRef(function VKVideoPlayer({
       const data = event.data;
       if (!data || typeof data !== 'object') return;
 
+      if (data.event === 'inited') {
+        guard.markStartup();
+      }
       if (data.event === 'inited' || data.event === 'started') {
         isReadyRef.current = true;
       }
@@ -103,12 +110,12 @@ const VKVideoPlayer = forwardRef(function VKVideoPlayer({
         currentTimeRef.current = data.data.time;
       }
 
-      if (Date.now() < ignoreEventsUntil.current) return;
-
       if (data.event === 'started' || data.event === 'resumed') {
+        if (!guard.shouldReport(true)) return;
         lastKnownTime.current = currentTimeRef.current;
         onPlay?.(currentTimeRef.current);
       } else if (data.event === 'paused') {
+        if (!guard.shouldReport(false)) return;
         lastKnownTime.current = currentTimeRef.current;
         onPause?.(currentTimeRef.current);
       }

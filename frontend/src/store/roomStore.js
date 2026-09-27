@@ -151,17 +151,14 @@ export const useRoomStore = create((set, get) => ({
       set({ isJoining: false, hasJoinedRoom: true });
       const { type, payload, timestamp, senderId } = msg;
 
-      // Track remote playback actions (from peers or server) to command local player
-      const isRemote = senderId !== userId || senderId === 'SERVER';
-      if (isRemote && ['PLAY', 'PAUSE', 'SEEK', 'SYNC_STATE'].includes(type)) {
+      // The server never sends a peer's PLAY/PAUSE/SEEK/chat back to the socket
+      // that sent it, so anything arriving here came from another connection —
+      // including the same user in a second tab, whose actions must apply too
+      // (filtering by senderId === userId used to drop them).
+      if (['PLAY', 'PAUSE', 'SEEK', 'SYNC_STATE'].includes(type)) {
         set({ lastRemoteAction: { type, payload, timestamp, id: Math.random() } });
       }
 
-      // Do not ignore system/room state events such as members, sync or typing
-      if (senderId === userId && !['SYNC_STATE', 'MEMBER_JOINED', 'MEMBER_LEFT', 'LOAD_VIDEO', 'CONTROL_MODE_CHANGED'].includes(type)) {
-        return;
-      }
-      
       switch (type) {
         case 'MEMBER_JOINED':
         case 'MEMBER_LEFT': {

@@ -108,6 +108,24 @@ describe('roomStore', () => {
     expect(useRoomStore.getState().roomState.currentTime).toBe(50);
   });
 
+  it('applies PAUSE/PLAY sent by the same user from another tab', () => {
+    const socket = joinAndGetSocket(true);
+
+    // Same userId, different connection: the server never echoes a socket's
+    // own PLAY/PAUSE back to it, so this can only be the user's other tab.
+    socket.trigger('message', {
+      type: 'PAUSE', roomId: 'room1', senderId: 'user1', timestamp: Date.now(), payload: { position: 42 },
+    });
+    expect(useRoomStore.getState().lastRemoteAction).toMatchObject({ type: 'PAUSE', payload: { position: 42 } });
+    expect(useRoomStore.getState().roomState).toMatchObject({ isPlaying: false, currentTime: 42 });
+
+    socket.trigger('message', {
+      type: 'PLAY', roomId: 'room1', senderId: 'user1', timestamp: Date.now(), payload: { position: 42 },
+    });
+    expect(useRoomStore.getState().lastRemoteAction.type).toBe('PLAY');
+    expect(useRoomStore.getState().roomState.isPlaying).toBe(true);
+  });
+
   it('applies CONTROL_MODE_CHANGED and toasts other users but not the sender themselves', () => {
     const socket = joinAndGetSocket(true);
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import YouTube from 'react-youtube';
 import { useRoomStore } from '../../store/roomStore';
+import { usePlaybackReportGuard } from '../../utils/playbackGuard';
 
 const YouTubePlayer = forwardRef(function YouTubePlayer({
   videoId,
@@ -13,8 +14,11 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
   onEnded,
 }, ref) {
   const playerRef = useRef(null);
-  // Startup grace period: ignore player initialization events for the first 6 seconds
+  // Suppresses user-seek detection while the player is being driven
+  // programmatically (startup, remote commands). Play/pause reporting uses
+  // the state-based guard below instead, so real clicks are never swallowed.
   const ignoreEventsUntil = useRef(Date.now() + 6000);
+  const guard = usePlaybackReportGuard();
   const lastKnownPlayerTime = useRef(0);
   const isInitialReady = useRef(false);
 
@@ -27,6 +31,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
     if (!lastRemoteAction || !playerRef.current) return;
     const { type, payload, timestamp } = lastRemoteAction;
     const player = playerRef.current;
+    guard.markRemoteCommand();
 
     try {
       if (type === 'PLAY') {
@@ -143,6 +148,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
     playerRef.current = e.target;
     isInitialReady.current = true;
     ignoreEventsUntil.current = Date.now() + 5000;
+    guard.markStartup();
 
     let expectedTime = parseFloat(roomState.currentTime || 0);
     if (roomState.isPlaying) {
@@ -150,22 +156,20 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
       expectedTime += Math.max(0, elapsed * (roomState.playbackRate || 1.0));
     }
     lastKnownPlayerTime.current = expectedTime;
-    if (expectedTime > 0) {
-      try {
-        e.target.seekTo(expectedTime, true);
-      } catch (err) {}
-    }
-    if (roomState.isPlaying) {
-      try {
+    try {
+      if (roomState.isPlaying) {
+        if (expectedTime > 0) e.target.seekTo(expectedTime, true);
         e.target.playVideo();
-      } catch (err) {}
-    }
+      } else if (expectedTime > 0) {
+        // Match a paused room without starting playback: seekTo() on a video
+        // that hasn't started yet would begin playing it.
+        e.target.cueVideoById({ videoId, startSeconds: expectedTime });
+      }
+    } catch (err) {}
   };
 
   const handlePlay = async (e) => {
-    if (Date.now() < ignoreEventsUntil.current) {
-      return;
-    }
+    if (!guard.shouldReport(true)) return;
     try {
       const currentTime = await e.target.getCurrentTime();
       lastKnownPlayerTime.current = currentTime;
@@ -174,9 +178,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
   };
 
   const handlePause = async (e) => {
-    if (Date.now() < ignoreEventsUntil.current) {
-      return;
-    }
+    if (!guard.shouldReport(false)) return;
     try {
       const currentTime = await e.target.getCurrentTime();
       lastKnownPlayerTime.current = currentTime;
@@ -265,7 +267,9 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({
           height: '100%',
           host: 'https://www.youtube-nocookie.com',
           playerVars: {
-            autoplay: 1,
+            // Playback is started explicitly in handleReady only when the room
+            // is playing; autoplay would start a paused room's video locally.
+            autoplay: 0,
             modestbranding: 1,
             rel: 0,
             playsinline: 1,

@@ -1,5 +1,6 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useRoomStore } from '../../store/roomStore';
+import { usePlaybackReportGuard } from '../../utils/playbackGuard';
 
 const TwitchPlayer = forwardRef(function TwitchPlayer({
   videoId,
@@ -16,6 +17,8 @@ const TwitchPlayer = forwardRef(function TwitchPlayer({
   const ignoreEventsUntil = useRef(0);
   const isReadyRef = useRef(false);
   const hasSyncedOnce = useRef(false);
+  // Play/pause reporting; ignoreEventsUntil above only gates seek reporting.
+  const guard = usePlaybackReportGuard({ startupBlocksPlay: true });
 
   const lastRemoteAction = useRoomStore(state => state.lastRemoteAction);
 
@@ -80,16 +83,17 @@ const TwitchPlayer = forwardRef(function TwitchPlayer({
 
       player.addEventListener(window.Twitch.Player.READY, () => {
         isReadyRef.current = true;
+        guard.markStartup();
       });
 
       player.addEventListener(window.Twitch.Player.PLAY, () => {
-        if (Date.now() < ignoreEventsUntil.current) return;
+        if (!guard.shouldReport(true)) return;
         const time = twitchType === 'video' ? player.getCurrentTime() : 0;
         onPlay?.(time);
       });
 
       player.addEventListener(window.Twitch.Player.PAUSE, () => {
-        if (Date.now() < ignoreEventsUntil.current) return;
+        if (!guard.shouldReport(false)) return;
         const time = twitchType === 'video' ? player.getCurrentTime() : 0;
         onPause?.(time);
       });
@@ -117,6 +121,7 @@ const TwitchPlayer = forwardRef(function TwitchPlayer({
     if (!lastRemoteAction || !playerRef.current || !isReadyRef.current) return;
     const { type, payload, timestamp } = lastRemoteAction;
     const player = playerRef.current;
+    guard.markRemoteCommand();
 
     try {
       if (type === 'PLAY') {
